@@ -1605,17 +1605,6 @@
     renderComparePanel('compareLeft');
     renderComparePanel('compareRight');
     loadEntriesFromStorage();
-    if (postedEntries.length === 0) {
-        // Seed with a small illustrative example so the tool never opens empty.
-        addEntry('quarterly_sales_example', 'csv', [makeSheet('Sheet1', [
-            ['Region', 'Rep', 'Deals Closed', 'Revenue', 'Renewed'],
-            ['West', 'A. Ruiz', 14, 128400.5, true],
-            ['West', 'D. Chen', 9, 76200, false],
-            ['East', 'M. Okafor', 21, 194500, true],
-            ['East', 'S. Novak', 11, 88250.75, true],
-            ['Central', 'J. Park', 6, 41300, false]
-        ], true)], null, null, false);
-    }
     </script>
 </body>
 </html>
