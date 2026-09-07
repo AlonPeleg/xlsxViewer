@@ -354,7 +354,7 @@
                         </label>
                         <div class="formula-bar">
                             <span class="formula-bar-fx" title="Insert a function" onclick="toggleFormulaRef(event, 'compareLeft')">ƒx</span>
-                            <input type="text" class="formula-bar-input" id="compareLeftFormulaBar" placeholder="Click a cell to view or edit its value or formula" oninput="onFormulaBarInput('compareLeft', this.value)" onkeydown="onFormulaBarKeydown(event, 'compareLeft')" onblur="refreshFormulaDisplays('compareLeft')">
+                            <input type="text" class="formula-bar-input" id="compareLeftFormulaBar" placeholder="Click a cell to view or edit its value or formula" title="While editing a formula, Ctrl/Cmd+click a cell to insert its reference" oninput="onFormulaBarInput('compareLeft', this.value)" onkeydown="onFormulaBarKeydown(event, 'compareLeft')" onblur="refreshFormulaDisplays('compareLeft')">
                         </div>
                         <div class="search-container">
                             <input type="text" class="search-inline" placeholder="Find in table..." oninput="setPanelSearch('compareLeft', this.value)" onkeydown="panelSearchNav(event, 'compareLeft')">
@@ -386,7 +386,7 @@
                         </label>
                         <div class="formula-bar">
                             <span class="formula-bar-fx" title="Insert a function" onclick="toggleFormulaRef(event, 'compareRight')">ƒx</span>
-                            <input type="text" class="formula-bar-input" id="compareRightFormulaBar" placeholder="Click a cell to view or edit its value or formula" oninput="onFormulaBarInput('compareRight', this.value)" onkeydown="onFormulaBarKeydown(event, 'compareRight')" onblur="refreshFormulaDisplays('compareRight')">
+                            <input type="text" class="formula-bar-input" id="compareRightFormulaBar" placeholder="Click a cell to view or edit its value or formula" title="While editing a formula, Ctrl/Cmd+click a cell to insert its reference" oninput="onFormulaBarInput('compareRight', this.value)" onkeydown="onFormulaBarKeydown(event, 'compareRight')" onblur="refreshFormulaDisplays('compareRight')">
                         </div>
                         <div class="search-container">
                             <input type="text" class="search-inline" placeholder="Find in table..." oninput="setPanelSearch('compareRight', this.value)" onkeydown="panelSearchNav(event, 'compareRight')">
@@ -1809,8 +1809,13 @@
             document.addEventListener('keydown', panelCtxMenuKeydown);
         }, 0);
     }
-    // Any scroll anywhere invalidates the menu's fixed-position anchor, so just close it.
-    document.addEventListener('scroll', () => closePanelCtxMenu(), true);
+    // A scroll anywhere ELSE invalidates the menu's fixed-position anchor, so close it — but
+    // scrolling inside the menu itself (the function reference list is a tall, scrollable
+    // panel) must not close it, or the list could never be scrolled at all.
+    document.addEventListener('scroll', (e) => {
+        if (activePanelCtxMenu && activePanelCtxMenu.contains(e.target)) return;
+        closePanelCtxMenu();
+    }, true);
 
     function openRowInsertMenu(e, panelId, actualRowIdx) {
         e.stopPropagation();
@@ -1883,6 +1888,123 @@
             const caretPos = newVal.length - 1;
             bar.setSelectionRange(caretPos, caretPos);
         }
+    }
+
+    /* ---- "Point mode": Ctrl (or Cmd) + click a cell while editing a formula inserts that
+       cell's reference at the caret, instead of navigating to it — the same quick way real
+       spreadsheets let you build a formula by clicking cells rather than typing addresses.
+       Works whether the formula is being edited in the formula bar or directly in a cell. ---- */
+
+    // Whichever of "the formula bar" or "a grid cell being edited in place" currently holds
+    // an in-progress formula (its text starts with "="), if any — that's where a
+    // Ctrl/Cmd-click's cell reference gets inserted.
+    function getFormulaEditTarget(panelId) {
+        const bar = document.getElementById(panelId + 'FormulaBar');
+        if (bar && document.activeElement === bar && bar.value.trim().startsWith('=')) {
+            return { kind: 'bar', el: bar };
+        }
+        const p = comparePanels[panelId];
+        if (p.activeCell) {
+            const { rowType, dataRowIdx, colIdx } = p.activeCell;
+            const sel = `#${panelId}Content [data-row-type="${rowType}"][data-row-idx="${dataRowIdx}"][data-col-idx="${colIdx}"]`;
+            const cell = document.querySelector(sel);
+            if (cell && cell.textContent.trim().startsWith('=')) return { kind: 'cell', el: cell };
+        }
+        return null;
+    }
+
+    function cellAddressFromCellEl(panelId, el) {
+        const p = comparePanels[panelId];
+        const rowType = el.dataset.rowType;
+        const dataRowIdx = parseInt(el.dataset.rowIdx, 10);
+        const colIdx = parseInt(el.dataset.colIdx, 10);
+        const actualRow = rowType === 'header' ? 0 : dataRowIdx + (p.hasHeader ? 1 : 0);
+        return colLetter(colIdx) + (actualRow + 1);
+    }
+
+    // "=", "(", ",", and every operator are followed directly by the next token with no
+    // joiner; anything else (a digit, letter, "$", ")", ...) means we're right after a
+    // finished value, so a "+" goes in first — that's what turns SUM() + click A9 + click B9
+    // into SUM(A9+B9) rather than SUM(A9B9).
+    function formulaJoinPrefix(beforeText) {
+        const trimmed = beforeText.replace(/\s+$/, '');
+        if (trimmed === '' || trimmed === '=') return '';
+        const lastChar = trimmed[trimmed.length - 1];
+        if ('(,+-*/^&=<>'.includes(lastChar)) return '';
+        return '+';
+    }
+
+    function getContentEditableCaretOffset(el) {
+        const sel = window.getSelection();
+        if (!sel.rangeCount) return el.textContent.length;
+        const range = sel.getRangeAt(0);
+        if (!el.contains(range.startContainer)) return el.textContent.length;
+        const preRange = range.cloneRange();
+        preRange.selectNodeContents(el);
+        preRange.setEnd(range.startContainer, range.startOffset);
+        return preRange.toString().length;
+    }
+
+    // Our cells only ever hold a single plain text node (set via textContent), so placing
+    // the caret is just finding that node and an offset into it.
+    function setContentEditableCaret(el, offset) {
+        const range = document.createRange();
+        const sel = window.getSelection();
+        const textNode = el.firstChild && el.firstChild.nodeType === 3 ? el.firstChild : null;
+        if (textNode) {
+            range.setStart(textNode, Math.max(0, Math.min(offset, textNode.length)));
+            range.collapse(true);
+        } else {
+            range.selectNodeContents(el);
+            range.collapse(false);
+        }
+        sel.removeAllRanges();
+        sel.addRange(range);
+    }
+
+    function insertFormulaRef(panelId, target, addr) {
+        if (target.kind === 'bar') {
+            const bar = target.el;
+            const start = bar.selectionStart, end = bar.selectionEnd;
+            const text = bar.value;
+            const before = text.slice(0, start), after = text.slice(end);
+            const insertStr = formulaJoinPrefix(before) + addr;
+            const newVal = before + insertStr + after;
+            bar.value = newVal;
+            bar.focus();
+            const newPos = before.length + insertStr.length;
+            bar.setSelectionRange(newPos, newPos);
+            onFormulaBarInput(panelId, newVal);
+        } else {
+            const cell = target.el;
+            const offset = getContentEditableCaretOffset(cell);
+            const text = cell.textContent;
+            const before = text.slice(0, offset), after = text.slice(offset);
+            const insertStr = formulaJoinPrefix(before) + addr;
+            cell.textContent = before + insertStr + after;
+            cell.focus();
+            setContentEditableCaret(cell, before.length + insertStr.length);
+            onPanelCellInput(panelId, cell);
+        }
+    }
+
+    // Delegated so it survives renderComparePanel's innerHTML rebuilds without needing to be
+    // rewired every render — contentEl itself is stable across renders, only its children
+    // are replaced. Only intercepts when a formula is actually being edited right now
+    // (getFormulaEditTarget); otherwise a Ctrl/Cmd-click behaves exactly as a plain click.
+    function setupFormulaPointClick(panelId) {
+        const contentEl = document.getElementById(panelId + 'Content');
+        if (!contentEl) return;
+        contentEl.addEventListener('mousedown', (e) => {
+            if (!(e.ctrlKey || e.metaKey)) return;
+            const cellEl = e.target.closest('[data-col-idx]');
+            if (!cellEl) return;
+            const target = getFormulaEditTarget(panelId);
+            if (!target) return;
+            e.preventDefault();
+            e.stopPropagation();
+            insertFormulaRef(panelId, target, cellAddressFromCellEl(panelId, cellEl));
+        });
     }
 
     // Focuses a cell and selects its full contents — like landing on a cell in a real
@@ -2551,6 +2673,8 @@
     renderComparePanel('compareLeft');
     renderComparePanel('compareRight');
     wireCompareSyncScroll();
+    setupFormulaPointClick('compareLeft');
+    setupFormulaPointClick('compareRight');
     loadEntriesFromStorage();
     </script>
 </body>
