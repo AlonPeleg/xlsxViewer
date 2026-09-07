@@ -154,6 +154,11 @@
     .cell-empty { background: var(--empty-bg); }
     .match { background-color: rgba(220, 190, 0, 0.4); border-radius: 1px; }
     .match.current { background-color: #f7d75c; color: #000; border: 1px solid #ffaa00; font-weight: bold; }
+    /* Compare-panel search highlights the whole cell rather than the matched substring —
+       cells are contenteditable, and splicing <span> match markers into their content
+       would risk corrupting the DOM the moment the user starts typing in one. */
+    .data-table td.cell-search-match, .data-table th.cell-search-match { background: rgba(220, 190, 0, 0.30) !important; }
+    .data-table td.cell-search-match.current-match, .data-table th.cell-search-match.current-match { background: rgba(247, 215, 92, 0.5) !important; box-shadow: inset 0 0 0 1.5px #ffaa00; }
 
     .status-bar { flex-shrink: 0; padding: 3px 8px; font-size: 9.5px; font-family: var(--font-mono); color: var(--accent); background: var(--bg); border-top: 1px solid var(--border-soft); display: flex; justify-content: space-between; }
     .empty-state { padding: 30px 12px; text-align: center; color: var(--text-dim); font-size: 12px; }
@@ -183,10 +188,16 @@
     .chip[draggable="true"]:active { cursor: grabbing; }
     .chip-hint { font-size: 10px; color: var(--text-dim); margin: -4px 0 10px 2px; }
 
-    .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; flex: 1 1 auto; min-height: 0; }
-    .compare-col { display: flex; flex-direction: column; border: 1px solid var(--border-soft); border-radius: 6px; overflow: hidden; background: var(--bg-panel); min-height: 0; }
+    /* Fixed viewport-relative height (not flex:1 1 auto) so a big table can never inflate
+       this row past the screen — the same approach the JSON tool uses for its editor grid.
+       With flex:1 1 auto here, #compare-pane's own ">*:not(#compareResults){flex-shrink:0}"
+       rule (below) would strip the shrink back out, leaving a grid that only grows to fit
+       its content and never shrinks — exactly the "box is too large, can't scroll" bug. */
+    .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; height: 52vh; flex-shrink: 0; }
+    .compare-col { display: flex; flex-direction: column; height: 100%; border: 1px solid var(--border-soft); border-radius: 6px; overflow: hidden; background: var(--bg-panel); min-height: 0; }
     .compare-col.drop-target { outline: 2px dashed var(--focus); outline-offset: 3px; }
     .compare-col-toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border-soft); flex-wrap: wrap; flex-shrink: 0; }
+    .compare-col-toolbar-2 { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-bottom: 1px solid var(--border-soft); flex-shrink: 0; flex-wrap: wrap; background: var(--bg-panel); }
     .compare-label { font-size: 10px; text-transform: uppercase; opacity: 0.7; font-weight: 800; letter-spacing: 0.4px; }
     .compare-sheet-select { background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: 3px; font-size: 10.5px; padding: 2px 4px; font-family: var(--font-ui); }
     .compare-col .content { flex-grow: 1; }
@@ -229,6 +240,10 @@
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #4a4a4a; border-radius: 6px; border: 3px solid var(--bg); }
     ::-webkit-scrollbar-thumb:hover { background: #5c5c5c; }
+    /* The square where a horizontal and vertical scrollbar meet (e.g. a compare panel with
+       both) is its own element and defaults to the browser's light UI color if unstyled —
+       that's the stray white box in the bottom corner of a scrollable panel. */
+    ::-webkit-scrollbar-corner { background: var(--bg); }
 </style>
 </head>
 <body>
@@ -278,9 +293,10 @@
                     <span class="title-sub">Panel A vs Panel B</span>
                 </div>
                 <div class="btn-group">
-                    <button class="btn" onclick="runCompare()">Compare Panels</button>
-                    <button class="btn btn-secondary" id="compareToggleDiffView" onclick="toggleCompareDiffMode()">View: List</button>
-                    <button class="btn btn-secondary" onclick="clearCompareResults()">Clear Results</button>
+                    <label class="switch-container">
+                        <div class="switch"><input type="checkbox" id="compareSyncScrollToggle" checked><span class="slider"></span></div>
+                        Sync Scroll
+                    </label>
                     <button class="btn btn-secondary" onclick="resetCompareSection()">Reset Both Panels</button>
                 </div>
             </div>
@@ -295,12 +311,25 @@
                         <select class="compare-sheet-select" id="compareLeftSheetSelect" onchange="setComparePanelSheet('compareLeft', this.value)" style="display:none;"></select>
                         <button class="btn btn-secondary editor-mode-btn" onclick="addPanelRow('compareLeft')">+ Row</button>
                         <button class="btn btn-secondary editor-mode-btn" onclick="addPanelColumn('compareLeft')">+ Col</button>
+                        <div class="actions">
+                            <div class="btn-icon" title="Copy as CSV" onclick="copyPanelAsCsv('compareLeft', this)"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M4 4V1h11v11h-3v3H1V4h3zm10-2H5v9h9V2zM2 14h9V5H2v9z"/></svg></div>
+                            <div class="btn-icon" title="Copy as JSON" style="color:#e8b94a" onclick="copyPanelAsJson('compareLeft', this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3c-1.5 0-2 1-2 2v4.5c0 1.5-1 2-1 2.5 0 .5 1 1 1 2.5V19c0 1 1 2 2 2M16 3c1.5 0 2 1 2 2v4.5c0 1.5-1 2-1 2.5 0 .5-1 1-1 2.5V19c0 1-1 2-2 2"/></svg></div>
+                            <div class="btn-icon" title="Copy as Markdown table" onclick="copyPanelAsMarkdown('compareLeft', this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.5" width="13" height="11" rx="1"/><line x1="1.5" y1="6.3" x2="14.5" y2="6.3"/><line x1="6.1" y1="6.3" x2="6.1" y2="13.5"/><line x1="10.3" y1="6.3" x2="10.3" y2="13.5"/></svg></div>
+                            <div class="btn-icon" title="Save as .xlsx" style="color:var(--xlsx-color)" onclick="savePanelAsXlsx('compareLeft')"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="1.5" width="13" height="13" rx="1.5"/><line x1="1.5" y1="6" x2="14.5" y2="6"/><line x1="1.5" y1="10.3" x2="14.5" y2="10.3"/><line x1="6.6" y1="1.5" x2="6.6" y2="14.5"/></svg></div>
+                            <div class="btn-icon" title="Save as .csv" onclick="savePanelAsCsv('compareLeft')"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M14 0H2a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2zM4 1h8v4H4V1zm10 13H2V2h1v4h10V2h1v12zM5 10h6v3H5v-3z"/></svg></div>
+                            <div class="btn-icon" title="Save this panel as a new file in Viewer" onclick="savePanelToViewer('compareLeft', this)"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0l4.5 4.5-1.06 1.06L8.75 2.87V10h-1.5V2.87L4.56 5.56 3.5 4.5 8 0zM1 12h14v1.5H1V12z"/></svg></div>
+                        </div>
+                        <div class="btn-delete" title="Clear Panel A" onclick="clearComparePanel('compareLeft')">×</div>
+                    </div>
+                    <div class="compare-col-toolbar-2">
                         <label class="switch-container">
                             <div class="switch"><input type="checkbox" id="compareLeftHeaderToggle" checked onchange="toggleComparePanelHeader('compareLeft', this.checked)"><span class="slider"></span></div>
                             Header row
                         </label>
-                        <div class="btn-icon" title="Save this panel as a new file in Viewer" onclick="savePanelToViewer('compareLeft', this)"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0l4.5 4.5-1.06 1.06L8.75 2.87V10h-1.5V2.87L4.56 5.56 3.5 4.5 8 0zM1 12h14v1.5H1V12z"/></svg></div>
-                        <div class="btn-delete" title="Clear Panel A" onclick="clearComparePanel('compareLeft')" style="margin-left:auto;">×</div>
+                        <div class="search-container">
+                            <input type="text" class="search-inline" placeholder="Find in table..." oninput="setPanelSearch('compareLeft', this.value)" onkeydown="panelSearchNav(event, 'compareLeft')">
+                            <span class="search-counter" id="compareLeftCounter">0/0</span>
+                        </div>
                     </div>
                     <div class="content" id="compareLeftContent"><div class="empty-state">Load a table into Panel A, or start a blank one</div></div>
                 </div>
@@ -310,17 +339,40 @@
                         <select class="compare-sheet-select" id="compareRightSheetSelect" onchange="setComparePanelSheet('compareRight', this.value)" style="display:none;"></select>
                         <button class="btn btn-secondary editor-mode-btn" onclick="addPanelRow('compareRight')">+ Row</button>
                         <button class="btn btn-secondary editor-mode-btn" onclick="addPanelColumn('compareRight')">+ Col</button>
+                        <div class="actions">
+                            <div class="btn-icon" title="Copy as CSV" onclick="copyPanelAsCsv('compareRight', this)"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M4 4V1h11v11h-3v3H1V4h3zm10-2H5v9h9V2zM2 14h9V5H2v9z"/></svg></div>
+                            <div class="btn-icon" title="Copy as JSON" style="color:#e8b94a" onclick="copyPanelAsJson('compareRight', this)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3c-1.5 0-2 1-2 2v4.5c0 1.5-1 2-1 2.5 0 .5 1 1 1 2.5V19c0 1 1 2 2 2M16 3c1.5 0 2 1 2 2v4.5c0 1.5-1 2-1 2.5 0 .5-1 1-1 2.5V19c0 1-1 2-2 2"/></svg></div>
+                            <div class="btn-icon" title="Copy as Markdown table" onclick="copyPanelAsMarkdown('compareRight', this)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.5" width="13" height="11" rx="1"/><line x1="1.5" y1="6.3" x2="14.5" y2="6.3"/><line x1="6.1" y1="6.3" x2="6.1" y2="13.5"/><line x1="10.3" y1="6.3" x2="10.3" y2="13.5"/></svg></div>
+                            <div class="btn-icon" title="Save as .xlsx" style="color:var(--xlsx-color)" onclick="savePanelAsXlsx('compareRight')"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="1.5" width="13" height="13" rx="1.5"/><line x1="1.5" y1="6" x2="14.5" y2="6"/><line x1="1.5" y1="10.3" x2="14.5" y2="10.3"/><line x1="6.6" y1="1.5" x2="6.6" y2="14.5"/></svg></div>
+                            <div class="btn-icon" title="Save as .csv" onclick="savePanelAsCsv('compareRight')"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M14 0H2a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2zM4 1h8v4H4V1zm10 13H2V2h1v4h10V2h1v12zM5 10h6v3H5v-3z"/></svg></div>
+                            <div class="btn-icon" title="Save this panel as a new file in Viewer" onclick="savePanelToViewer('compareRight', this)"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0l4.5 4.5-1.06 1.06L8.75 2.87V10h-1.5V2.87L4.56 5.56 3.5 4.5 8 0zM1 12h14v1.5H1V12z"/></svg></div>
+                        </div>
+                        <div class="btn-delete" title="Clear Panel B" onclick="clearComparePanel('compareRight')">×</div>
+                    </div>
+                    <div class="compare-col-toolbar-2">
                         <label class="switch-container">
                             <div class="switch"><input type="checkbox" id="compareRightHeaderToggle" checked onchange="toggleComparePanelHeader('compareRight', this.checked)"><span class="slider"></span></div>
                             Header row
                         </label>
-                        <div class="btn-icon" title="Save this panel as a new file in Viewer" onclick="savePanelToViewer('compareRight', this)"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0l4.5 4.5-1.06 1.06L8.75 2.87V10h-1.5V2.87L4.56 5.56 3.5 4.5 8 0zM1 12h14v1.5H1V12z"/></svg></div>
-                        <div class="btn-delete" title="Clear Panel B" onclick="clearComparePanel('compareRight')" style="margin-left:auto;">×</div>
+                        <div class="search-container">
+                            <input type="text" class="search-inline" placeholder="Find in table..." oninput="setPanelSearch('compareRight', this.value)" onkeydown="panelSearchNav(event, 'compareRight')">
+                            <span class="search-counter" id="compareRightCounter">0/0</span>
+                        </div>
                     </div>
                     <div class="content" id="compareRightContent"><div class="empty-state">Load a table into Panel B, or start a blank one</div></div>
                 </div>
             </div>
 
+            <div class="toolbar" style="margin-top:10px;">
+                <div class="title-group">
+                    <h3 style="font-size:12px;">Panel A vs Panel B</h3>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-secondary" id="compareToggleDiffView" onclick="toggleCompareDiffMode()">View: List</button>
+                    <button class="btn" onclick="runCompare()">Compare Panels</button>
+                    <button class="btn btn-secondary" onclick="clearCompareResults()">Clear Results</button>
+                </div>
+            </div>
             <div id="compareResults" class="diff-output">Load a table into each panel, then click "Compare Panels".</div>
         </div>
     </div>
@@ -349,7 +401,7 @@
     // entry once loaded — editing a panel never mutates the original file. Cells are edited
     // directly in the rendered table (no separate raw-text mode).
     // { allRows: [[...]], hasHeader: bool, sourceEntryId: string|null, sourceSheetIdx: number }
-    function emptyPanelState() { return { allRows: [], hasHeader: true, sourceEntryId: null, sourceSheetIdx: 0, tabAnchorCol: null, internalFocus: false }; }
+    function emptyPanelState() { return { allRows: [], hasHeader: true, sourceEntryId: null, sourceSheetIdx: 0, tabAnchorCol: null, internalFocus: false, searchQuery: '' }; }
     const comparePanels = { compareLeft: emptyPanelState(), compareRight: emptyPanelState() };
 
     const icons = {
@@ -1015,16 +1067,22 @@
         return { headers, rows: dataRows, hasHeader: sheet.hasHeader, name: sheet.name };
     }
 
-    function copyAsCsv(entryId, btn) {
-        const { headers, rows, hasHeader } = activeSheetData(entryId);
+    // Each export/copy action works from a plain {headers, rows, hasHeader} shape — the
+    // *Data() core, shared by the Viewer's per-entry actions and the Compare tab's
+    // per-panel actions below, which just supply that shape from a different source
+    // (activeSheetData() for an entry, panelDisplayData() for a compare panel).
+    function copyAsCsvData(sheetData, btn) {
+        const { headers, rows, hasHeader } = sheetData;
         const lines = [];
         if (hasHeader) lines.push(headers.map(csvEscapeField).join(','));
         rows.forEach(r => lines.push(headers.map((_, i) => csvEscapeField(r[i])).join(',')));
         navigator.clipboard.writeText(lines.join('\r\n')).then(() => flashIcon(btn));
     }
+    function copyAsCsv(entryId, btn) { copyAsCsvData(activeSheetData(entryId), btn); }
+    function copyPanelAsCsv(panelId, btn) { copyAsCsvData(panelDisplayData(panelId), btn); }
 
-    function copyAsJson(entryId, btn) {
-        const { headers, rows, hasHeader } = activeSheetData(entryId);
+    function copyAsJsonData(sheetData, btn) {
+        const { headers, rows, hasHeader } = sheetData;
         let out;
         if (hasHeader) {
             out = rows.map(r => {
@@ -1037,9 +1095,11 @@
         }
         navigator.clipboard.writeText(JSON.stringify(out, null, 2)).then(() => flashIcon(btn));
     }
+    function copyAsJson(entryId, btn) { copyAsJsonData(activeSheetData(entryId), btn); }
+    function copyPanelAsJson(panelId, btn) { copyAsJsonData(panelDisplayData(panelId), btn); }
 
-    function copyAsMarkdown(entryId, btn) {
-        const { headers, rows, hasHeader } = activeSheetData(entryId);
+    function copyAsMarkdownData(sheetData, btn) {
+        const { headers, rows, hasHeader } = sheetData;
         const esc = s => String(s).replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
         const lines = [];
         const cols = hasHeader ? headers : headers.map((_, i) => colLetter(i));
@@ -1048,18 +1108,22 @@
         rows.forEach(r => lines.push('| ' + cols.map((_, i) => esc(displayValue(r[i]))).join(' | ') + ' |'));
         navigator.clipboard.writeText(lines.join('\n')).then(() => flashIcon(btn));
     }
+    function copyAsMarkdown(entryId, btn) { copyAsMarkdownData(activeSheetData(entryId), btn); }
+    function copyPanelAsMarkdown(panelId, btn) { copyAsMarkdownData(panelDisplayData(panelId), btn); }
 
-    function saveAsCsv(entryId) {
-        const { headers, rows, hasHeader } = activeSheetData(entryId);
+    function saveAsCsvData(sheetData, filename) {
+        const { headers, rows, hasHeader } = sheetData;
         const lines = [];
         if (hasHeader) lines.push(headers.map(csvEscapeField).join(','));
         rows.forEach(r => lines.push(headers.map((_, i) => csvEscapeField(r[i])).join(',')));
         const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = url; a.download = defaultFilename(findEntry(entryId)) + '.csv'; a.click();
+        a.href = url; a.download = filename + '.csv'; a.click();
         URL.revokeObjectURL(url);
     }
+    function saveAsCsv(entryId) { saveAsCsvData(activeSheetData(entryId), defaultFilename(findEntry(entryId))); }
+    function savePanelAsCsv(panelId) { saveAsCsvData(panelDisplayData(panelId), panelFilename(panelId)); }
 
     function saveAsXlsx(entryId) {
         if (typeof XLSX === 'undefined') { alert('The XLSX engine did not load (no network access to the CDN in this environment).'); return; }
@@ -1070,6 +1134,24 @@
             XLSX.utils.book_append_sheet(wb, ws, (sheet.name || 'Sheet1').slice(0, 31));
         });
         XLSX.writeFile(wb, defaultFilename(entry) + '.xlsx');
+    }
+
+    function panelFilename(panelId) {
+        const p = comparePanels[panelId];
+        if (p.sourceEntryId) {
+            const entry = findEntry(p.sourceEntryId);
+            if (entry) return defaultFilename(entry) + (panelId === 'compareLeft' ? '_A' : '_B');
+        }
+        return panelId === 'compareLeft' ? 'panel_a' : 'panel_b';
+    }
+
+    function savePanelAsXlsx(panelId) {
+        if (typeof XLSX === 'undefined') { alert('The XLSX engine did not load (no network access to the CDN in this environment).'); return; }
+        const p = comparePanels[panelId];
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.aoa_to_sheet(p.allRows.map(r => r.map(v => isDateVal(v) ? formatDate(v) : v)));
+        XLSX.utils.book_append_sheet(wb, ws, (panelId === 'compareLeft' ? 'Panel A' : 'Panel B'));
+        XLSX.writeFile(wb, panelFilename(panelId) + '.xlsx');
     }
 
     /* =========================================================================
@@ -1283,6 +1365,9 @@
             cellEl.className = [cellClass(value), rtl ? 'cell-rtl' : ''].filter(Boolean).join(' ');
             cellEl.title = value;
         }
+        // className above wholesale-replaces the cell's classes (wiping any search-match
+        // marker it had), so re-derive matches after — cheap enough at typical table sizes.
+        if (p.searchQuery) updatePanelSearch(panelId);
     }
 
     // Enter moves down a column (adding a row past the last one); Tab / Shift+Tab move
@@ -1365,6 +1450,8 @@
 
         if (!p.allRows.length) {
             contentEl.innerHTML = `<div class="empty-state">Load a table into ${panelLabel}, or <a href="javascript:void(0)" onclick="startBlankPanel('${panelId}')" style="color:var(--accent)">start a blank one</a></div>`;
+            const counterEl = document.getElementById(panelId + 'Counter');
+            if (counterEl) counterEl.textContent = '0/0';
             return;
         }
 
@@ -1403,6 +1490,48 @@
         contentEl.innerHTML = '';
         contentEl.appendChild(table);
         wireEditableCells(contentEl, panelId);
+        updatePanelSearch(panelId);
+    }
+
+    // Highlights whole cells (not substrings — see the CSS note on .cell-search-match)
+    // matching the panel's current search query, tracks them for Enter-to-jump navigation,
+    // and updates the "x/y" counter. Called after every re-render and every keystroke in
+    // either the search box or a table cell, so it always reflects what's on screen.
+    function updatePanelSearch(panelId) {
+        const p = comparePanels[panelId];
+        const q = (p.searchQuery || '').toLowerCase();
+        const cells = document.querySelectorAll(`#${panelId}Content thead th[data-col], #${panelId}Content tbody td[data-col]`);
+        const matches = [];
+        cells.forEach(cell => {
+            const isMatch = !!q && cell.textContent.toLowerCase().includes(q);
+            cell.classList.toggle('cell-search-match', isMatch);
+            cell.classList.remove('current-match');
+            if (isMatch) matches.push(cell);
+        });
+        p._searchMatches = matches;
+        p._searchIndex = matches.length ? 0 : -1;
+        if (matches.length) matches[0].classList.add('current-match');
+        const counter = document.getElementById(panelId + 'Counter');
+        if (counter) counter.textContent = matches.length ? `1/${matches.length}` : '0/0';
+    }
+
+    function setPanelSearch(panelId, value) {
+        comparePanels[panelId].searchQuery = value;
+        updatePanelSearch(panelId);
+    }
+
+    function panelSearchNav(e, panelId) {
+        if (e.key !== 'Enter') return;
+        const p = comparePanels[panelId];
+        const matches = p._searchMatches || [];
+        if (!matches.length) return;
+        if (p._searchIndex >= 0 && matches[p._searchIndex]) matches[p._searchIndex].classList.remove('current-match');
+        p._searchIndex = (p._searchIndex + 1) % matches.length;
+        const cell = matches[p._searchIndex];
+        cell.classList.add('current-match');
+        cell.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+        const counter = document.getElementById(panelId + 'Counter');
+        if (counter) counter.textContent = `${p._searchIndex + 1}/${matches.length}`;
     }
 
     function clearCompareResults() {
@@ -1410,6 +1539,58 @@
         document.querySelectorAll('.diff-row-added, .diff-row-removed, .diff-cell-changed, .diff-col-onlyA, .diff-col-onlyB').forEach(el => {
             el.classList.remove('diff-row-added', 'diff-row-removed', 'diff-cell-changed', 'diff-col-onlyA', 'diff-col-onlyB');
         });
+    }
+
+    // Aligns two row lists with an LCS (longest-common-subsequence) instead of comparing
+    // row N of A against row N of B position-by-position. Positional comparison means one
+    // deleted row shifts everything after it out of alignment, so a single deletion shows
+    // up as one "removed" entry PLUS a false "changed" entry for every row that follows
+    // (they're really unchanged, just sitting one slot earlier/later). LCS instead finds
+    // the longest run of rows that appear unchanged and in the same relative order in both
+    // tables, and only the rows outside that run are reported as removed/added/changed.
+    function alignRows(a, b, colsA, colsB) {
+        const n = a.rows.length, m = b.rows.length;
+        const rowsEqual = (i, j) => {
+            const rowA = a.rows[i], rowB = b.rows[j];
+            for (let k = 0; k < colsA.length; k++) {
+                if (!valuesEqual(rowA[colsA[k]], rowB[colsB[k]])) return false;
+            }
+            return true;
+        };
+        // The DP table is O(n*m); cap it so a pair of huge tables can't hang the tab or
+        // blow the heap — fall back to plain positional pairing beyond that (same behavior
+        // this tool always had), rather than refusing to compare at all.
+        if (n * m > 4_000_000) {
+            const ops = [];
+            const max = Math.max(n, m);
+            for (let r = 0; r < max; r++) {
+                if (r >= n) ops.push({ type: 'ins', bj: r });
+                else if (r >= m) ops.push({ type: 'del', ai: r });
+                else if (rowsEqual(r, r)) ops.push({ type: 'match', ai: r, bj: r });
+                else { ops.push({ type: 'del', ai: r }); ops.push({ type: 'ins', bj: r }); }
+            }
+            return ops;
+        }
+        const W = m + 1;
+        const dp = new Uint32Array((n + 1) * W);
+        for (let i = n - 1; i >= 0; i--) {
+            const rowBase = i * W, nextBase = (i + 1) * W;
+            for (let j = m - 1; j >= 0; j--) {
+                dp[rowBase + j] = rowsEqual(i, j)
+                    ? dp[nextBase + j + 1] + 1
+                    : Math.max(dp[nextBase + j], dp[rowBase + j + 1]);
+            }
+        }
+        const ops = [];
+        let i = 0, j = 0;
+        while (i < n && j < m) {
+            if (rowsEqual(i, j)) { ops.push({ type: 'match', ai: i, bj: j }); i++; j++; }
+            else if (dp[(i + 1) * W + j] >= dp[i * W + j + 1]) { ops.push({ type: 'del', ai: i }); i++; }
+            else { ops.push({ type: 'ins', bj: j }); j++; }
+        }
+        while (i < n) { ops.push({ type: 'del', ai: i }); i++; }
+        while (j < m) { ops.push({ type: 'ins', bj: j }); j++; }
+        return ops;
     }
 
     function diffTables(a, b) {
@@ -1425,19 +1606,38 @@
             colsB = Array.from({ length: n }, (_, i) => i);
             labels = colsA.map(i => colLetter(i));
         }
-        const maxRows = Math.max(a.rows.length, b.rows.length);
+
+        const ops = alignRows(a, b, colsA, colsB);
         const diffs = [];
-        for (let r = 0; r < maxRows; r++) {
-            const rowA = a.rows[r], rowB = b.rows[r];
-            if (rowA === undefined) { diffs.push({ type: 'added', row: r }); continue; }
-            if (rowB === undefined) { diffs.push({ type: 'removed', row: r }); continue; }
-            const cells = [];
-            for (let k = 0; k < colsA.length; k++) {
-                const va = rowA[colsA[k]], vb = rowB[colsB[k]];
-                if (!valuesEqual(va, vb)) cells.push({ col: labels[k], colIdxA: colsA[k], colIdxB: colsB[k], oldVal: va, newVal: vb });
+        let k = 0;
+        while (k < ops.length) {
+            if (ops[k].type === 'match') { k++; continue; }
+            // A run of consecutive non-matching rows is a "replace" block: rows deleted from
+            // A here and rows inserted into B here. Pair them up 1:1 (in order) as "changed"
+            // rows — that's the common case of a row simply being edited — and only the
+            // leftover unpaired rows (a run with more deletes than inserts, or vice versa)
+            // are reported as pure removed/added.
+            let dels = [], inss = [];
+            while (k < ops.length && ops[k].type !== 'match') {
+                if (ops[k].type === 'del') dels.push(ops[k].ai); else inss.push(ops[k].bj);
+                k++;
             }
-            if (cells.length) diffs.push({ type: 'changed', row: r, cells });
+            const pairCount = Math.min(dels.length, inss.length);
+            for (let p = 0; p < pairCount; p++) {
+                const ai = dels[p], bj = inss[p];
+                const cells = [];
+                for (let c = 0; c < colsA.length; c++) {
+                    const va = a.rows[ai][colsA[c]], vb = b.rows[bj][colsB[c]];
+                    if (!valuesEqual(va, vb)) cells.push({ col: labels[c], colIdxA: colsA[c], colIdxB: colsB[c], oldVal: va, newVal: vb });
+                }
+                // Guard against the (rare) case where the alignment paired up two rows that
+                // turn out identical after all — report nothing rather than a no-op "changed".
+                if (cells.length) diffs.push({ type: 'changed', rowA: ai, rowB: bj, cells });
+            }
+            for (let p = pairCount; p < dels.length; p++) diffs.push({ type: 'removed', rowA: dels[p] });
+            for (let p = pairCount; p < inss.length; p++) diffs.push({ type: 'added', rowB: inss[p] });
         }
+
         // Extra columns carry their index in their own panel's header array, so the
         // corresponding <th>/<td data-col> in that panel can be marked directly.
         const extraColsA = a.headers.map((h, i) => ({ h, i })).filter(x => !commonCols.includes(x.h));
@@ -1524,8 +1724,8 @@
             document.querySelectorAll(`#compareRightContent tbody td[data-col="${x.i}"]`).forEach(td => td.classList.add('diff-col-onlyB'));
         });
         diffs.forEach(d => {
-            const trA = document.querySelector(`#compareLeftContent tr[data-orig-row="${d.row}"]`);
-            const trB = document.querySelector(`#compareRightContent tr[data-orig-row="${d.row}"]`);
+            const trA = d.rowA !== undefined ? document.querySelector(`#compareLeftContent tr[data-orig-row="${d.rowA}"]`) : null;
+            const trB = d.rowB !== undefined ? document.querySelector(`#compareRightContent tr[data-orig-row="${d.rowB}"]`) : null;
             if (d.type === 'removed' && trA) trA.classList.add('diff-row-removed');
             if (d.type === 'added' && trB) trB.classList.add('diff-row-added');
             if (d.type === 'changed') {
@@ -1542,16 +1742,21 @@
         extraColsA.forEach(x => entries.push({ side: 'A', type: 'removed', colIdx: x.i, html: `<b>Column "${escapeHtml(x.h)}"</b> only in Panel A`, onClick: () => highlightDiffCol('compareLeft', x.i) }));
         extraColsB.forEach(x => entries.push({ side: 'B', type: 'added', colIdx: x.i, html: `<b>Column "${escapeHtml(x.h)}"</b> only in Panel B`, onClick: () => highlightDiffCol('compareRight', x.i) }));
         diffs.forEach(d => {
-            const rowLabel = d.row + ((d.type === 'added' ? sheetDataB.hasHeader : sheetDataA.hasHeader) ? 2 : 1);
+            const rowLabelA = d.rowA !== undefined ? d.rowA + (sheetDataA.hasHeader ? 2 : 1) : null;
+            const rowLabelB = d.rowB !== undefined ? d.rowB + (sheetDataB.hasHeader ? 2 : 1) : null;
             if (d.type === 'changed') {
-                const oldHtml = `<b>Row ${rowLabel}</b>: ` + d.cells.map(c => `${escapeHtml(c.col)} (${escapeHtml(displayValue(c.oldVal))})`).join(', ');
-                const newHtml = `<b>Row ${rowLabel}</b>: ` + d.cells.map(c => `${escapeHtml(c.col)} (${escapeHtml(displayValue(c.newVal))})`).join(', ');
-                const bothHtml = `<b>Row ${rowLabel}</b>: ` + d.cells.map(c => `${escapeHtml(c.col)} (${escapeHtml(displayValue(c.oldVal))} → ${escapeHtml(displayValue(c.newVal))})`).join(', ');
+                // Rows can realign to different positions on each side (e.g. a row was
+                // deleted earlier in Panel A, shifting everything after it up by one) —
+                // when that happens, show both row numbers rather than a misleading single one.
+                const rowLabel = rowLabelA === rowLabelB ? `Row ${rowLabelA}` : `Row ${rowLabelA} → ${rowLabelB}`;
+                const oldHtml = `<b>${rowLabel}</b>: ` + d.cells.map(c => `${escapeHtml(c.col)} (${escapeHtml(displayValue(c.oldVal))})`).join(', ');
+                const newHtml = `<b>${rowLabel}</b>: ` + d.cells.map(c => `${escapeHtml(c.col)} (${escapeHtml(displayValue(c.newVal))})`).join(', ');
+                const bothHtml = `<b>${rowLabel}</b>: ` + d.cells.map(c => `${escapeHtml(c.col)} (${escapeHtml(displayValue(c.oldVal))} → ${escapeHtml(displayValue(c.newVal))})`).join(', ');
                 entries.push({ side: 'both', type: 'changed', oldHtml, newHtml, bothHtml, onClick: () => highlightDiffRow(d) });
             } else if (d.type === 'removed') {
-                entries.push({ side: 'A', type: 'removed', html: `<b>Row ${rowLabel}</b> only in Panel A`, onClick: () => highlightDiffRow(d) });
+                entries.push({ side: 'A', type: 'removed', html: `<b>Row ${rowLabelA}</b> only in Panel A`, onClick: () => highlightDiffRow(d) });
             } else {
-                entries.push({ side: 'B', type: 'added', html: `<b>Row ${rowLabel}</b> only in Panel B`, onClick: () => highlightDiffRow(d) });
+                entries.push({ side: 'B', type: 'added', html: `<b>Row ${rowLabelB}</b> only in Panel B`, onClick: () => highlightDiffRow(d) });
             }
         });
 
@@ -1576,14 +1781,33 @@
     }
 
     function highlightDiffRow(d) {
-        const trA = document.querySelector(`#compareLeftContent tr[data-orig-row="${d.row}"]`);
-        const trB = document.querySelector(`#compareRightContent tr[data-orig-row="${d.row}"]`);
+        const trA = d.rowA !== undefined ? document.querySelector(`#compareLeftContent tr[data-orig-row="${d.rowA}"]`) : null;
+        const trB = d.rowB !== undefined ? document.querySelector(`#compareRightContent tr[data-orig-row="${d.rowB}"]`) : null;
         [trA, trB].forEach(tr => {
             if (!tr) return;
             tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
             tr.classList.add('flash-row');
             setTimeout(() => tr.classList.remove('flash-row'), 1000);
         });
+    }
+
+    // The two panel .content elements are stable across re-renders (renderComparePanel only
+    // replaces their children), so listeners attached once here keep working no matter how
+    // many times either panel's table gets rebuilt.
+    let isCompareScrollSyncing = false;
+    function wireCompareSyncScroll() {
+        const leftEl = document.getElementById('compareLeftContent');
+        const rightEl = document.getElementById('compareRightContent');
+        const sync = (from, to) => () => {
+            const toggle = document.getElementById('compareSyncScrollToggle');
+            if (!toggle || !toggle.checked || isCompareScrollSyncing) return;
+            isCompareScrollSyncing = true;
+            to.scrollTop = from.scrollTop;
+            to.scrollLeft = from.scrollLeft;
+            isCompareScrollSyncing = false;
+        };
+        leftEl.addEventListener('scroll', sync(leftEl, rightEl));
+        rightEl.addEventListener('scroll', sync(rightEl, leftEl));
     }
 
     function highlightDiffCol(panelId, colIdx) {
@@ -1604,6 +1828,7 @@
     loadLayout();
     renderComparePanel('compareLeft');
     renderComparePanel('compareRight');
+    wireCompareSyncScroll();
     loadEntriesFromStorage();
     </script>
 </body>
