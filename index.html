@@ -1,0 +1,1621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CSV/XLSX Viewer</title>
+<style>
+    :root {
+        --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        --font-mono: "Cascadia Code", "SF Mono", Consolas, "Courier New", monospace;
+
+        --bg: #1e1e1e;
+        --bg-panel: #252526;
+        --bg-elevated: #2d2d30;
+        --border: #3c3c3c;
+        --border-soft: rgba(140,140,140,0.28);
+        --text: #cccccc;
+        --text-dim: #8a8a8a;
+        --text-bright: #ffffff;
+
+        --accent: #0e8fd9;
+        --accent-fg: #ffffff;
+        --accent-hover: #1ba1ec;
+        --input-bg: #3c3c3c;
+        --hover-bg: #2a2d2e;
+        --sel-bg: #04395e;
+        --focus: #0e8fd9;
+
+        --csv-color: #4fc3d9;
+        --tsv-color: #b18cd9;
+        --xlsx-color: #21a366;
+
+        --num-color: #b5cea8;
+        --bool-color: #6ab0f3;
+        --date-color: #dcb67a;
+        --empty-bg: rgba(255,255,255,0.02);
+
+        --diff-add: #4ec9b0;
+        --diff-remove: #f48771;
+        --diff-change: #dcdcaa;
+
+        --shadow: rgba(0,0,0,0.55);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+        font-family: var(--font-ui);
+        color: var(--text);
+        background: var(--bg);
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        overflow: hidden;
+    }
+
+    ::selection { background: var(--sel-bg); }
+
+    /* ---------- Tabs ---------- */
+    .tabs-header { display: flex; background: var(--bg-panel); border-bottom: 1px solid var(--border-soft); flex-shrink: 0; }
+    .tab-link { padding: 9px 18px; cursor: pointer; color: var(--text-dim); border-right: 1px solid var(--border-soft); font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; font-weight: 600; user-select: none; }
+    .tab-link:hover { background: var(--hover-bg); }
+    .tab-link.active { background: var(--bg); color: var(--text-bright); box-shadow: inset 0 -2px 0 var(--accent); }
+
+    .tab-viewport { flex-grow: 1; overflow: hidden; position: relative; }
+    .tab-pane { display: none; height: 100%; width: 100%; overflow-y: auto; padding: 14px; }
+    .tab-pane.active { display: block; }
+    #compare-pane.active { display: flex; flex-direction: column; overflow: hidden; }
+    #compare-pane.active > *:not(#compareResults) { flex-shrink: 0; }
+
+    h1, h2, h3 { text-wrap: balance; margin: 0; }
+
+    /* ---------- Toolbar / buttons ---------- */
+    .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap: 10px; flex-wrap: wrap; }
+    .title-group { display: flex; align-items: baseline; gap: 8px; }
+    .title-group h3 { font-size: 14px; font-weight: 700; color: var(--text-bright); }
+    .title-sub { font-size: 11px; color: var(--text-dim); }
+    .btn-group { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .btn { border: none; padding: 5px 11px; cursor: pointer; border-radius: 4px; font-size: 11px; font-weight: 600; background: var(--accent); color: var(--accent-fg); font-family: var(--font-ui); }
+    .btn:hover { background: var(--accent-hover); }
+    .btn-secondary { background: var(--input-bg); color: var(--text); }
+    .btn-secondary:hover { background: #48484b; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-global-icon { background: transparent; border: none; cursor: pointer; padding: 4px; display: flex; align-items: center; border-radius: 4px; opacity: 0.75; color: var(--text); }
+    .btn-global-icon:hover { background: var(--hover-bg); opacity: 1; }
+    .btn-global-icon svg { width: 15px; height: 15px; fill: currentColor; }
+
+    .drop-zone { background: var(--input-bg); border: 1px dashed var(--border-soft); border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .drop-zone.file-drop-target { outline: 2px dashed var(--focus); outline-offset: 2px; }
+    .drop-zone textarea { width: 100%; background: var(--bg); color: var(--text); border: 1px solid var(--border); padding: 8px; font-family: var(--font-mono); font-size: 11.5px; border-radius: 4px; outline: none; resize: vertical; min-height: 44px; unicode-bidi: plaintext; }
+    .drop-zone textarea:focus { border-color: var(--focus); }
+    .drop-zone-footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .drop-zone-hint { font-size: 10.5px; color: var(--text-dim); }
+
+    /* ---------- Entry layout ---------- */
+    #container { display: flex; flex-direction: column; gap: 12px; }
+    #container.grid-view { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); gap: 12px; align-items: start; }
+    @media (min-width: 1500px) {
+        #container.grid-view { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    .entry { border: 1px solid var(--border-soft); border-radius: 6px; overflow: hidden; background: var(--bg-panel); display: flex; flex-direction: column; max-height: 62vh; box-shadow: 0 1px 3px var(--shadow); }
+    .entry.collapsed-entry { max-height: none; }
+    .entry.collapsed-entry .content, .entry.collapsed-entry .sheet-tabs, .entry.collapsed-entry .status-bar, .entry.collapsed-entry .entry-toolbar-2 { display: none; }
+    .entry-header { background: var(--bg-elevated); padding: 4px 8px; display: flex; align-items: center; gap: 6px; border-bottom: 1px solid var(--border-soft); flex-shrink: 0; flex-wrap: wrap; }
+    .master-toggle { cursor: pointer; font-size: 9px; width: 12px; display: inline-flex; justify-content: center; opacity: 0.7; user-select: none; color: var(--text); }
+    .entry.collapsed-entry .master-toggle { transform: rotate(-90deg); }
+    .time-tag { font-size: 9px; opacity: 0.55; font-family: var(--font-mono); white-space: nowrap; }
+    .type-badge { font-size: 8.5px; padding: 2px 5px; border-radius: 3px; color: #0b0b0b; text-transform: uppercase; font-weight: 800; letter-spacing: 0.3px; }
+    .dims-tag { font-size: 9.5px; color: var(--text-dim); font-family: var(--font-mono); white-space: nowrap; }
+    .name-input { background: transparent; border: 1px solid transparent; color: var(--text-bright); font-size: 11.5px; font-weight: 700; padding: 2px 4px; width: 130px; border-radius: 3px; font-family: var(--font-ui); unicode-bidi: plaintext; }
+    .name-input:hover { border-color: var(--border); }
+    .name-input:focus { background: var(--input-bg); border-color: var(--focus); outline: none; }
+    .actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+    .btn-icon { cursor: pointer; display: flex; align-items: center; padding: 4px; border-radius: 4px; opacity: 0.75; color: var(--text); }
+    .btn-icon:hover { background: var(--hover-bg); opacity: 1; }
+    .btn-icon svg { width: 14px; height: 14px; }
+    .btn-delete { color: var(--diff-remove); cursor: pointer; font-weight: bold; font-size: 15px; line-height: 1; padding: 0 4px; opacity: 0.65; user-select: none; }
+    .btn-delete:hover { opacity: 1; }
+
+    .entry-toolbar-2 { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-bottom: 1px solid var(--border-soft); flex-shrink: 0; flex-wrap: wrap; background: var(--bg-panel); }
+    .switch-container { display: flex; align-items: center; gap: 5px; font-size: 10.5px; color: var(--text-dim); cursor: pointer; user-select: none; }
+    .switch { position: relative; display: inline-block; width: 26px; height: 15px; flex-shrink: 0; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #4a4a4a; transition: .15s; border-radius: 15px; }
+    .slider:before { position: absolute; content: ""; height: 11px; width: 11px; left: 2px; bottom: 2px; background-color: white; transition: .15s; border-radius: 50%; }
+    input:checked + .slider { background-color: var(--accent); }
+    input:checked + .slider:before { transform: translateX(11px); }
+
+    .search-container { display: flex; align-items: center; background: var(--input-bg); border: 1px solid var(--border); border-radius: 3px; width: 150px; }
+    .search-inline { width: 100%; background: transparent; color: var(--text); border: none; font-size: 10.5px; padding: 3px 6px; outline: none; font-family: var(--font-mono); }
+    .search-counter { font-size: 9px; padding: 0 5px; opacity: 0.6; font-family: var(--font-mono); white-space: nowrap; }
+
+    .sheet-tabs { display: flex; gap: 2px; padding: 5px 8px 0; flex-shrink: 0; overflow-x: auto; background: var(--bg-panel); }
+    .sheet-tab { padding: 4px 10px; font-size: 10.5px; border-radius: 4px 4px 0 0; cursor: pointer; color: var(--text-dim); background: var(--bg-elevated); white-space: nowrap; border: 1px solid var(--border-soft); border-bottom: none; }
+    .sheet-tab.active { color: var(--text-bright); background: var(--bg); font-weight: 700; }
+    .sheet-tab:hover { color: var(--text-bright); }
+
+    .content { flex-grow: 1; overflow: auto; background: var(--bg); }
+    .data-table { border-collapse: collapse; width: 100%; font-family: var(--font-mono); font-size: 11.5px; }
+    .data-table th, .data-table td { border-right: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft); padding: 4px 8px; text-align: left; white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; unicode-bidi: plaintext; }
+    .data-table thead th { position: sticky; top: 0; background: var(--bg-elevated); color: var(--text-bright); font-weight: 700; cursor: pointer; user-select: none; z-index: 2; font-family: var(--font-ui); font-size: 10.5px; letter-spacing: 0.2px; }
+    .data-table thead th:hover { background: #38383c; }
+    .data-table thead th .sort-arrow { opacity: 0.6; margin-left: 4px; font-size: 9px; }
+    .data-table .rownum-header, .data-table td.rownum { position: sticky; left: 0; background: var(--bg-elevated); color: var(--text-dim); text-align: right; font-size: 10px; z-index: 1; user-select: none; }
+    .data-table .rownum-header { z-index: 3; }
+    .data-table tbody tr:hover td { background: var(--hover-bg); }
+    .data-table tbody tr:hover td.rownum { background: #34383a; }
+    .cell-num, .cell-num-like { color: var(--num-color); font-variant-numeric: tabular-nums; }
+    .data-table td.cell-num, .data-table td.cell-num-like, .data-table td.cell-rtl, .data-table th.cell-rtl { text-align: right; }
+    .cell-bool { color: var(--bool-color); font-weight: 600; }
+    .cell-date { color: var(--date-color); }
+    .cell-empty { background: var(--empty-bg); }
+    .match { background-color: rgba(220, 190, 0, 0.4); border-radius: 1px; }
+    .match.current { background-color: #f7d75c; color: #000; border: 1px solid #ffaa00; font-weight: bold; }
+
+    .status-bar { flex-shrink: 0; padding: 3px 8px; font-size: 9.5px; font-family: var(--font-mono); color: var(--accent); background: var(--bg); border-top: 1px solid var(--border-soft); display: flex; justify-content: space-between; }
+    .empty-state { padding: 30px 12px; text-align: center; color: var(--text-dim); font-size: 12px; }
+
+    /* ---------- Focus mode ---------- */
+    #focus-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); z-index: 9000; display: none; align-items: center; justify-content: center; padding: 30px; }
+    #focus-overlay.active { display: flex; }
+    .entry.focused-entry { width: min(1200px, 94vw); max-height: 90vh; box-shadow: 0 10px 50px rgba(0,0,0,0.7); }
+    .focus-close-btn { position: absolute; top: 18px; right: 22px; z-index: 9001; background: var(--input-bg); color: var(--text); border: none; width: 28px; height: 28px; border-radius: 50%; font-size: 16px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+    .focus-close-btn:hover { background: #48484b; }
+
+    @keyframes flash-pulse { 0% { background-color: rgba(14,143,217,0.35); } 100% { background-color: transparent; } }
+    /* box-shadow rather than background so the pulse still reads over a cell/row that
+       already has an !important diff background (changed cell, extra column, added/
+       removed row) — an animated background-color can't win against !important. */
+    @keyframes flash-ring-pulse { 0% { box-shadow: inset 0 0 0 3px rgba(14,143,217,0.95), 0 0 10px 2px rgba(14,143,217,0.6); } 100% { box-shadow: inset 0 0 0 3px rgba(14,143,217,0); } }
+    .flash-row { animation: flash-pulse 1s ease-out, flash-ring-pulse 1s ease-out; }
+
+    /* ---------- Compare tab ---------- */
+    .chips-box { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; max-height: 84px; overflow-y: auto; padding: 8px; background: var(--bg-panel); border: 1px solid var(--border-soft); border-radius: 5px; }
+    .chips-empty { opacity: 0.5; font-size: 11px; padding: 4px; }
+    .chip { display: flex; align-items: center; gap: 5px; background: var(--input-bg); border: 1px solid var(--border); border-radius: 12px; padding: 3px 10px; font-size: 11px; cursor: pointer; }
+    .chip:hover { border-color: var(--focus); background: var(--hover-bg); }
+    .chip-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .chip-name { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chip[draggable="true"] { cursor: grab; }
+    .chip[draggable="true"]:active { cursor: grabbing; }
+    .chip-hint { font-size: 10px; color: var(--text-dim); margin: -4px 0 10px 2px; }
+
+    .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; flex: 1 1 auto; min-height: 0; }
+    .compare-col { display: flex; flex-direction: column; border: 1px solid var(--border-soft); border-radius: 6px; overflow: hidden; background: var(--bg-panel); min-height: 0; }
+    .compare-col.drop-target { outline: 2px dashed var(--focus); outline-offset: 3px; }
+    .compare-col-toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--border-soft); flex-wrap: wrap; flex-shrink: 0; }
+    .compare-label { font-size: 10px; text-transform: uppercase; opacity: 0.7; font-weight: 800; letter-spacing: 0.4px; }
+    .compare-sheet-select { background: var(--input-bg); color: var(--text); border: 1px solid var(--border); border-radius: 3px; font-size: 10.5px; padding: 2px 4px; font-family: var(--font-ui); }
+    .compare-col .content { flex-grow: 1; }
+    .editor-mode-btn { font-size: 10px; padding: 3px 9px; white-space: nowrap; }
+    #compareLeftContent [contenteditable="true"], #compareRightContent [contenteditable="true"] { cursor: text; outline: none; min-height: 1.3em; }
+    #compareLeftContent span.cell-edit, #compareRightContent span.cell-edit { display: inline-block; min-width: 8px; }
+    #compareLeftContent td[contenteditable]:focus, #compareRightContent td[contenteditable]:focus,
+    #compareLeftContent th:focus-within, #compareRightContent th:focus-within { background: var(--sel-bg); box-shadow: inset 0 0 0 1px var(--focus); }
+    #compareLeftContent .data-table th, #compareRightContent .data-table th { position: relative; }
+    #compareLeftContent .data-table th, #compareRightContent .data-table th, #compareLeftContent .data-table td.rownum, #compareRightContent .data-table td.rownum { padding-inline-end: 20px; }
+    .col-del, .row-del { position: absolute; top: 2px; inset-inline-end: 3px; opacity: 0; cursor: pointer; color: var(--diff-remove); font-weight: bold; font-size: 12px; line-height: 1.4; padding: 0 3px; border-radius: 3px; }
+    .col-del:hover, .row-del:hover { background: rgba(244, 135, 113, 0.25); }
+    .data-table th:hover .col-del, .data-table td.rownum:hover .row-del { opacity: 0.85; }
+    /* Marks left on the panel tables themselves after a compare, so a changed cell or a
+       column that only exists on one side is obvious at a glance, not just described in
+       the text results below. !important beats the table's own td/hover backgrounds. */
+    .data-table td.diff-cell-changed { background: rgba(220,220,170,0.30) !important; box-shadow: inset 0 0 0 2px var(--diff-change); }
+    tr.diff-row-added td { background: rgba(78,201,176,0.12) !important; }
+    tr.diff-row-removed td { background: rgba(244,135,113,0.12) !important; }
+    .data-table th.diff-col-onlyA, .data-table td.diff-col-onlyA { background: rgba(244,135,113,0.16) !important; box-shadow: inset 0 -2px 0 var(--diff-remove); }
+    .data-table th.diff-col-onlyB, .data-table td.diff-col-onlyB { background: rgba(78,201,176,0.16) !important; box-shadow: inset 0 -2px 0 var(--diff-add); }
+
+    .diff-output { margin-top: 10px; border: 1px solid var(--border-soft); padding: 8px; background: var(--bg-panel); font-family: var(--font-mono); font-size: 11.5px; border-radius: 6px; overflow-y: auto; flex: 1 1 auto; min-height: 100px; }
+    .diff-summary { font-weight: 700; margin-bottom: 8px; color: var(--text-bright); font-family: var(--font-ui); font-size: 12px; }
+    .diff-line { padding: 5px 8px; border-radius: 3px; margin-bottom: 2px; cursor: pointer; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; box-sizing: border-box; min-height: 26px; }
+    .diff-line:hover { background: var(--hover-bg); }
+    .diff-line-spacer { min-height: 26px; margin-bottom: 2px; }
+    .diff-content-box { display: flex; align-items: flex-start; gap: 8px; overflow: hidden; min-width: 0; flex: 1 1 auto; }
+    .diff-icon { font-weight: bold; width: 12px; text-align: center; flex-shrink: 0; }
+    .diff-text { overflow: hidden; min-width: 0; flex: 1 1 auto; }
+    .diff-text b { color: var(--text-bright); }
+    .diff-added { background: rgba(78,201,176,0.08); color: var(--diff-add); border-left: 3px solid var(--diff-add); }
+    .diff-removed { background: rgba(244,135,113,0.08); color: var(--diff-remove); border-left: 3px solid var(--diff-remove); }
+    .diff-changed { background: rgba(220,220,170,0.08); color: var(--diff-change); border-left: 3px solid var(--diff-change); }
+    .diff-tag { font-size: 9px; font-weight: 800; text-transform: uppercase; opacity: 0.85; flex-shrink: 0; }
+    .side-diff-container { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; min-width: 0; }
+    .side-diff-container > div { min-width: 0; }
+
+    ::-webkit-scrollbar { width: 11px; height: 11px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #4a4a4a; border-radius: 6px; border: 3px solid var(--bg); }
+    ::-webkit-scrollbar-thumb:hover { background: #5c5c5c; }
+</style>
+</head>
+<body>
+    <div class="tabs-header">
+        <div class="tab-link active" data-tab="viewer-pane" onclick="switchTab('viewer-pane', this)">Viewer</div>
+        <div class="tab-link" data-tab="compare-pane" onclick="switchTab('compare-pane', this)">Compare</div>
+    </div>
+
+    <div class="tab-viewport">
+        <div id="viewer-pane" class="tab-pane active">
+            <div class="toolbar">
+                <div class="title-group">
+                    <h3>CSV / XLSX Viewer</h3>
+                    <span class="title-sub">browse, search &amp; sort spreadsheet files</span>
+                </div>
+                <div class="btn-group">
+                    <button id="viewModeBtn" class="btn btn-secondary" onclick="toggleLayout()">View: Stack</button>
+                    <button class="btn-global-icon" title="Collapse all files" onclick="setAllCollapse(true)">
+                        <svg viewBox="0 0 16 16"><path d="M9 9H5V5h4v4zm5-7H2v12h12V2zM3 13V3h10v10H3z"/></svg>
+                    </button>
+                    <button class="btn-global-icon" title="Expand all files" onclick="setAllCollapse(false)">
+                        <svg viewBox="0 0 16 16"><path d="M11 11H5V5h6v6zm3-9H2v12h12V2zM3 13V3h10v10H3z"/></svg>
+                    </button>
+                    <button class="btn-global-icon" title="Upload CSV/TSV/XLSX file(s)" onclick="document.getElementById('fileInput').click()">
+                        <svg viewBox="0 0 16 16"><path d="M8 1.5l3.75 3.75-1.06 1.06L8.75 4.37V10h-1.5V4.37L5.31 6.31 4.25 5.25 8 1.5zM2 12h12v2.5H2V12z"/></svg>
+                    </button>
+                    <input type="file" id="fileInput" accept=".csv,.tsv,.txt,.xlsx,.xls" multiple style="display:none" onchange="handleFileUpload(this.files)">
+                    <button class="btn btn-secondary" onclick="clearAllEntries()">Clear All</button>
+                </div>
+            </div>
+
+            <div class="drop-zone" id="pasteZone">
+                <textarea id="pasteInput" rows="2" placeholder="Paste CSV or TSV text here, or drop / upload a .csv, .tsv or .xlsx file..."></textarea>
+                <div class="drop-zone-footer">
+                    <span class="drop-zone-hint">Drop a file anywhere in this box, or paste text and click Add.</span>
+                    <button class="btn" onclick="addFromPasteBox()">Add Table</button>
+                </div>
+            </div>
+
+            <div id="container"><div class="empty-state">No files loaded yet — upload or paste a CSV/TSV, or drop an .xlsx workbook.</div></div>
+        </div>
+
+        <div id="compare-pane" class="tab-pane">
+            <div class="toolbar">
+                <div class="title-group">
+                    <h3>Compare Tables</h3>
+                    <span class="title-sub">Panel A vs Panel B</span>
+                </div>
+                <div class="btn-group">
+                    <button class="btn" onclick="runCompare()">Compare Panels</button>
+                    <button class="btn btn-secondary" id="compareToggleDiffView" onclick="toggleCompareDiffMode()">View: List</button>
+                    <button class="btn btn-secondary" onclick="clearCompareResults()">Clear Results</button>
+                    <button class="btn btn-secondary" onclick="resetCompareSection()">Reset Both Panels</button>
+                </div>
+            </div>
+
+            <div id="compareChips" class="chips-box"></div>
+            <div class="chip-hint">Click a file above to choose a panel, or drag it straight onto Panel A or Panel B. Cells are editable directly in the table — click one to type.</div>
+
+            <div class="compare-grid">
+                <div class="compare-col" id="compareLeftCol" ondragover="allowCompareDrop(event)" ondrop="handleCompareDrop(event,'compareLeft')" ondragenter="this.classList.add('drop-target')" ondragleave="this.classList.remove('drop-target')">
+                    <div class="compare-col-toolbar">
+                        <span class="compare-label">Panel A</span>
+                        <select class="compare-sheet-select" id="compareLeftSheetSelect" onchange="setComparePanelSheet('compareLeft', this.value)" style="display:none;"></select>
+                        <button class="btn btn-secondary editor-mode-btn" onclick="addPanelRow('compareLeft')">+ Row</button>
+                        <button class="btn btn-secondary editor-mode-btn" onclick="addPanelColumn('compareLeft')">+ Col</button>
+                        <label class="switch-container">
+                            <div class="switch"><input type="checkbox" id="compareLeftHeaderToggle" checked onchange="toggleComparePanelHeader('compareLeft', this.checked)"><span class="slider"></span></div>
+                            Header row
+                        </label>
+                        <div class="btn-icon" title="Save this panel as a new file in Viewer" onclick="savePanelToViewer('compareLeft', this)"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0l4.5 4.5-1.06 1.06L8.75 2.87V10h-1.5V2.87L4.56 5.56 3.5 4.5 8 0zM1 12h14v1.5H1V12z"/></svg></div>
+                        <div class="btn-delete" title="Clear Panel A" onclick="clearComparePanel('compareLeft')" style="margin-left:auto;">×</div>
+                    </div>
+                    <div class="content" id="compareLeftContent"><div class="empty-state">Load a table into Panel A, or start a blank one</div></div>
+                </div>
+                <div class="compare-col" id="compareRightCol" ondragover="allowCompareDrop(event)" ondrop="handleCompareDrop(event,'compareRight')" ondragenter="this.classList.add('drop-target')" ondragleave="this.classList.remove('drop-target')">
+                    <div class="compare-col-toolbar">
+                        <span class="compare-label">Panel B</span>
+                        <select class="compare-sheet-select" id="compareRightSheetSelect" onchange="setComparePanelSheet('compareRight', this.value)" style="display:none;"></select>
+                        <button class="btn btn-secondary editor-mode-btn" onclick="addPanelRow('compareRight')">+ Row</button>
+                        <button class="btn btn-secondary editor-mode-btn" onclick="addPanelColumn('compareRight')">+ Col</button>
+                        <label class="switch-container">
+                            <div class="switch"><input type="checkbox" id="compareRightHeaderToggle" checked onchange="toggleComparePanelHeader('compareRight', this.checked)"><span class="slider"></span></div>
+                            Header row
+                        </label>
+                        <div class="btn-icon" title="Save this panel as a new file in Viewer" onclick="savePanelToViewer('compareRight', this)"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 0l4.5 4.5-1.06 1.06L8.75 2.87V10h-1.5V2.87L4.56 5.56 3.5 4.5 8 0zM1 12h14v1.5H1V12z"/></svg></div>
+                        <div class="btn-delete" title="Clear Panel B" onclick="clearComparePanel('compareRight')" style="margin-left:auto;">×</div>
+                    </div>
+                    <div class="content" id="compareRightContent"><div class="empty-state">Load a table into Panel B, or start a blank one</div></div>
+                </div>
+            </div>
+
+            <div id="compareResults" class="diff-output">Load a table into each panel, then click "Compare Panels".</div>
+        </div>
+    </div>
+
+    <div id="focus-overlay" onclick="if(event.target === this) closeFocusEntry();">
+        <div class="focus-close-btn" title="Close (Esc)" onclick="closeFocusEntry()">×</div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script>
+    'use strict';
+    /* =========================================================================
+       State & constants
+       ========================================================================= */
+    const STORAGE_KEY = 'sheet_viewer_entries_v1';
+    const LAYOUT_KEY = 'sheet_viewer_layout_mode';
+    const TYPE_COLORS = { csv: 'var(--csv-color)', tsv: 'var(--tsv-color)', xlsx: 'var(--xlsx-color)' };
+
+    let postedEntries = [];   // { id, name, type, timeStr, sheets:[Sheet], activeSheet }
+    let entryIdCounter = 0;
+    let isGridView = false;
+
+    // Sheet = { name, allRows: [[...]], hasHeader: bool, sortCol: number|null, sortDir: 1|-1, filterQuery: '' }
+
+    // Each compare panel holds its own editable copy of a table, decoupled from any Viewer
+    // entry once loaded — editing a panel never mutates the original file. Cells are edited
+    // directly in the rendered table (no separate raw-text mode).
+    // { allRows: [[...]], hasHeader: bool, sourceEntryId: string|null, sourceSheetIdx: number }
+    function emptyPanelState() { return { allRows: [], hasHeader: true, sourceEntryId: null, sourceSheetIdx: 0, tabAnchorCol: null, internalFocus: false }; }
+    const comparePanels = { compareLeft: emptyPanelState(), compareRight: emptyPanelState() };
+
+    const icons = {
+        save: `<svg viewBox="0 0 16 16" fill="currentColor"><path d="M14 0H2a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2zM4 1h8v4H4V1zm10 13H2V2h1v4h10V2h1v12zM5 10h6v3H5v-3z"/></svg>`,
+        copy: `<svg viewBox="0 0 16 16" fill="currentColor"><path d="M4 4V1h11v11h-3v3H1V4h3zm10-2H5v9h9V2zM2 14h9V5H2v9z"/></svg>`,
+        json: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3c-1.5 0-2 1-2 2v4.5c0 1.5-1 2-1 2.5 0 .5 1 1 1 2.5V19c0 1 1 2 2 2M16 3c1.5 0 2 1 2 2v4.5c0 1.5-1 2-1 2.5 0 .5-1 1-1 2.5V19c0 1-1 2-2 2"/></svg>`,
+        md: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.5" width="13" height="11" rx="1"/><line x1="1.5" y1="6.3" x2="14.5" y2="6.3"/><line x1="6.1" y1="6.3" x2="6.1" y2="13.5"/><line x1="10.3" y1="6.3" x2="10.3" y2="13.5"/></svg>`,
+        xlsx: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="1.5" width="13" height="13" rx="1.5"/><line x1="1.5" y1="6" x2="14.5" y2="6"/><line x1="1.5" y1="10.3" x2="14.5" y2="10.3"/><line x1="6.6" y1="1.5" x2="6.6" y2="14.5"/></svg>`,
+        focus: `<svg viewBox="0 0 16 16" fill="currentColor"><path d="M1 1h5v1.5H2.5V6H1V1zm14 0v5h-1.5V2.5H10V1h5zM1 15v-5h1.5v3.5H6V15H1zm14 0h-5v-1.5h3.5V10H15v5z"/></svg>`
+    };
+
+    /* =========================================================================
+       Small utilities
+       ========================================================================= */
+    function escapeHtml(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function colLetter(n) {
+        let s = '', num = n + 1;
+        while (num > 0) {
+            const rem = (num - 1) % 26;
+            s = String.fromCharCode(65 + rem) + s;
+            num = Math.floor((num - 1) / 26);
+        }
+        return s;
+    }
+
+    function isDateVal(v) { return v instanceof Date && !isNaN(v.getTime()); }
+
+    function formatDate(d) {
+        const pad = n => String(n).padStart(2, '0');
+        const hasTime = d.getHours() || d.getMinutes() || d.getSeconds();
+        const datePart = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+        return hasTime ? `${datePart} ${pad(d.getHours())}:${pad(d.getMinutes())}` : datePart;
+    }
+
+    function displayValue(v) {
+        if (v === null || v === undefined) return '';
+        if (isDateVal(v)) return formatDate(v);
+        if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+        return String(v);
+    }
+
+    function cellClass(v) {
+        if (v === null || v === undefined || v === '') return 'cell-empty';
+        if (isDateVal(v)) return 'cell-date';
+        if (typeof v === 'boolean') return 'cell-bool';
+        if (typeof v === 'number') return 'cell-num';
+        if (typeof v === 'string' && v.trim() !== '' && /^-?\d+(\.\d+)?$/.test(v.trim())) return 'cell-num-like';
+        return '';
+    }
+
+    // Approximates the Unicode "first strong character" rule to right-align cells whose
+    // content reads as Hebrew/Arabic, skipping leading neutral characters (digits, quotes,
+    // punctuation, currency) the way a real bidi paragraph-direction check would.
+    function isRtlText(s) {
+        if (!s) return false;
+        const m = String(s).match(/[^\s\d.,;:\-+$€₪%()#'"\/\\]/);
+        if (!m) return false;
+        const code = m[0].codePointAt(0);
+        return (code >= 0x0590 && code <= 0x05FF) || (code >= 0x0600 && code <= 0x06FF) ||
+               (code >= 0x0750 && code <= 0x077F) || (code >= 0xFB1D && code <= 0xFDFF) || (code >= 0xFE70 && code <= 0xFEFF);
+    }
+
+    function normalizeForCompare(v) {
+        if (v === null || v === undefined || v === '') return '';
+        if (isDateVal(v)) return formatDate(v);
+        if (typeof v === 'boolean') return v ? 'true' : 'false';
+        if (typeof v === 'string') {
+            const t = v.trim().toLowerCase();
+            if (t === 'true' || t === 'false') return t;
+        }
+        return String(v);
+    }
+
+    function valuesEqual(a, b) {
+        return normalizeForCompare(a) === normalizeForCompare(b);
+    }
+
+    function csvEscapeField(v) {
+        if (v === null || v === undefined) v = '';
+        if (isDateVal(v)) v = formatDate(v);
+        const s = String(v);
+        if (/[",\r\n]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+        return s;
+    }
+
+    function debounce(fn, ms) {
+        let t;
+        return function (...args) { clearTimeout(t); t = setTimeout(() => fn.apply(this, args), ms); };
+    }
+
+    /* =========================================================================
+       Delimited text parsing (CSV / TSV)
+       ========================================================================= */
+    function detectDelimiter(text) {
+        const firstLine = (text.split(/\r\n|\r|\n/)[0]) || '';
+        const counts = {
+            ',': (firstLine.match(/,/g) || []).length,
+            '\t': (firstLine.match(/\t/g) || []).length,
+            ';': (firstLine.match(/;/g) || []).length
+        };
+        let best = ',', bestCount = counts[','];
+        for (const d of ['\t', ';']) { if (counts[d] > bestCount) { best = d; bestCount = counts[d]; } }
+        return best;
+    }
+
+    function parseDelimited(text, delimiter) {
+        const rows = [];
+        let row = [], field = '', inQuotes = false;
+        for (let i = 0; i < text.length; i++) {
+            const c = text[i];
+            if (inQuotes) {
+                if (c === '"') {
+                    if (text[i + 1] === '"') { field += '"'; i++; }
+                    else inQuotes = false;
+                } else field += c;
+            } else if (c === '"') {
+                inQuotes = true;
+            } else if (c === delimiter) {
+                row.push(field); field = '';
+            } else if (c === '\r') {
+                // swallow, \n (or end) closes the row
+            } else if (c === '\n') {
+                row.push(field); rows.push(row); row = []; field = '';
+            } else {
+                field += c;
+            }
+        }
+        if (field.length > 0 || row.length > 0) { row.push(field); rows.push(row); }
+        // drop a single trailing fully-empty row (from a trailing newline)
+        if (rows.length && rows[rows.length - 1].length === 1 && rows[rows.length - 1][0] === '') rows.pop();
+        // pad ragged rows to the widest row
+        const width = rows.reduce((m, r) => Math.max(m, r.length), 0);
+        rows.forEach(r => { while (r.length < width) r.push(''); });
+        return rows;
+    }
+
+    function makeSheet(name, allRows, hasHeader = true) {
+        return { name, allRows, hasHeader, sortCol: null, sortDir: 1, filterQuery: '' };
+    }
+
+    /* =========================================================================
+       Persistence
+       ========================================================================= */
+    function saveEntriesToStorage() {
+        try {
+            const serializable = postedEntries.map(e => ({
+                id: e.id, name: e.name || '', type: e.type, timeStr: e.timeStr,
+                activeSheet: e.activeSheet,
+                sheets: e.sheets.map(s => ({ name: s.name, allRows: s.allRows, hasHeader: s.hasHeader }))
+            }));
+            const payload = JSON.stringify(serializable);
+            if (payload.length > 4_000_000) { localStorage.removeItem(STORAGE_KEY); return; } // too big to persist safely
+            localStorage.setItem(STORAGE_KEY, payload);
+        } catch (err) {
+            console.warn('Could not persist entries (storage full or unavailable):', err);
+        }
+    }
+
+    function loadEntriesFromStorage() {
+        try {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (!saved) return;
+            const items = JSON.parse(saved);
+            if (!Array.isArray(items)) return;
+            items.forEach(item => {
+                const sheets = item.sheets.map(s => makeSheet(s.name, s.allRows, s.hasHeader));
+                addEntry(item.name, item.type, sheets, item.timeStr, item.id, false);
+            });
+        } catch (err) {
+            console.warn('Failed to load entries from storage:', err);
+        }
+    }
+
+    function clearAllEntries() {
+        postedEntries = [];
+        localStorage.removeItem(STORAGE_KEY);
+        renderAllEntries();
+        renderCompareChips();
+    }
+
+    /* =========================================================================
+       Layout / tabs
+       ========================================================================= */
+    function switchTab(paneId, el) {
+        document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+        document.querySelectorAll('.tab-link').forEach(l => l.classList.remove('active'));
+        document.getElementById(paneId).classList.add('active');
+        el.classList.add('active');
+        if (paneId === 'compare-pane') renderCompareChips();
+    }
+
+    function toggleLayout() {
+        isGridView = !isGridView;
+        applyLayout();
+        try { localStorage.setItem(LAYOUT_KEY, isGridView ? 'grid' : 'stack'); } catch (e) {}
+    }
+
+    function applyLayout() {
+        const c = document.getElementById('container');
+        const btn = document.getElementById('viewModeBtn');
+        c.classList.toggle('grid-view', isGridView);
+        btn.textContent = isGridView ? 'View: Grid' : 'View: Stack';
+    }
+
+    function loadLayout() {
+        try { if (localStorage.getItem(LAYOUT_KEY) === 'grid') isGridView = true; } catch (e) {}
+        applyLayout();
+    }
+
+    function setAllCollapse(collapsed) {
+        document.querySelectorAll('.entry').forEach(entry => entry.classList.toggle('collapsed-entry', collapsed));
+    }
+
+    /* =========================================================================
+       File / paste ingestion
+       ========================================================================= */
+    function extOf(filename) {
+        const m = /\.([a-z0-9]+)$/i.exec(filename || '');
+        return m ? m[1].toLowerCase() : '';
+    }
+
+    function handleFileUpload(fileList) {
+        if (!fileList || !fileList.length) return;
+        Array.from(fileList).forEach(file => {
+            const ext = extOf(file.name);
+            const name = file.name.replace(/\.[^/.]+$/, '');
+            if (ext === 'xlsx' || ext === 'xls') {
+                const reader = new FileReader();
+                reader.onload = e => {
+                    try {
+                        if (typeof XLSX === 'undefined') throw new Error('The XLSX engine did not load (no network access to the CDN).');
+                        const data = new Uint8Array(e.target.result);
+                        const wb = XLSX.read(data, { type: 'array', cellDates: true });
+                        const sheets = wb.SheetNames.map(sn => {
+                            const aoa = XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, defval: '', raw: true, blankrows: false });
+                            return makeSheet(sn, aoa.length ? aoa : [['']], true);
+                        });
+                        addEntry(name, 'xlsx', sheets);
+                    } catch (err) {
+                        alert('Could not read "' + file.name + '": ' + err.message);
+                    }
+                };
+                reader.onerror = () => alert('Failed to read file: ' + file.name);
+                reader.readAsArrayBuffer(file);
+            } else {
+                const reader = new FileReader();
+                reader.onload = e => {
+                    const raw = (e.target.result || '');
+                    if (!raw.trim()) return;
+                    const delim = ext === 'tsv' ? '\t' : detectDelimiter(raw);
+                    const rows = parseDelimited(raw, delim);
+                    addEntry(name, delim === '\t' ? 'tsv' : 'csv', [makeSheet('Sheet1', rows, true)]);
+                };
+                reader.onerror = () => alert('Failed to read file: ' + file.name);
+                reader.readAsText(file);
+            }
+        });
+        const input = document.getElementById('fileInput');
+        if (input) input.value = '';
+    }
+
+    function addFromPasteBox() {
+        const box = document.getElementById('pasteInput');
+        const raw = box.value;
+        if (!raw.trim()) return;
+        const delim = detectDelimiter(raw);
+        const rows = parseDelimited(raw, delim);
+        const type = delim === '\t' ? 'tsv' : 'csv';
+        addEntry('', type, [makeSheet('Sheet1', rows, true)]);
+        box.value = '';
+    }
+
+    const pasteZone = document.getElementById('pasteZone');
+    const pasteInput = document.getElementById('pasteInput');
+
+    pasteInput.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); addFromPasteBox(); }
+    });
+    pasteInput.addEventListener('paste', e => {
+        if (e.clipboardData && e.clipboardData.files && e.clipboardData.files.length > 0) {
+            e.preventDefault();
+            handleFileUpload(e.clipboardData.files);
+        }
+    });
+    ['dragover'].forEach(evt => pasteZone.addEventListener(evt, e => { e.preventDefault(); pasteZone.classList.add('file-drop-target'); }));
+    pasteZone.addEventListener('dragleave', () => pasteZone.classList.remove('file-drop-target'));
+    pasteZone.addEventListener('drop', e => {
+        e.preventDefault();
+        pasteZone.classList.remove('file-drop-target');
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) handleFileUpload(e.dataTransfer.files);
+    });
+
+    /* =========================================================================
+       Entries
+       ========================================================================= */
+    function findEntry(id) { return postedEntries.find(e => e.id === id); }
+
+    function addEntry(name, type, sheets, savedTimeStr = null, savedId = null, saveToStorage = true) {
+        const timeStr = savedTimeStr || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        let entryId = savedId;
+        if (!entryId) {
+            entryId = 'e' + (++entryIdCounter);
+        } else {
+            const num = parseInt(entryId.replace('e', ''), 10);
+            if (!isNaN(num) && num >= entryIdCounter) entryIdCounter = num;
+        }
+        postedEntries.push({ id: entryId, name: name || '', type, timeStr, sheets, activeSheet: 0, searchQuery: '', filterRows: false });
+        renderAllEntries();
+        if (saveToStorage) saveEntriesToStorage();
+        renderCompareChips();
+        return entryId;
+    }
+
+    function removeEntry(id) {
+        postedEntries = postedEntries.filter(e => e.id !== id);
+        // The compare panels hold their own decoupled copy of the data, so removing the
+        // source file only disconnects the sheet-picker — any edits already made stay put.
+        ['compareLeft', 'compareRight'].forEach(p => { if (comparePanels[p].sourceEntryId === id) comparePanels[p].sourceEntryId = null; });
+        renderAllEntries();
+        saveEntriesToStorage();
+        renderCompareChips();
+        renderComparePanel('compareLeft');
+        renderComparePanel('compareRight');
+    }
+
+    function updateEntryName(id, value) {
+        const entry = findEntry(id);
+        if (!entry) return;
+        entry.name = value;
+        saveEntriesToStorage();
+        renderCompareChips();
+    }
+
+    function entryDisplayName(entry) {
+        return (entry.name && entry.name.trim()) ? entry.name.trim() : `${entry.type.toUpperCase()} @ ${entry.timeStr}`;
+    }
+
+    function defaultFilename(entry) {
+        return (entry.name && entry.name.trim()) ? entry.name.trim().replace(/[^\w.-]+/g, '_') : 'table_export';
+    }
+
+    /* ---- rendering the full entry list ---- */
+    function renderAllEntries() {
+        const container = document.getElementById('container');
+        container.innerHTML = '';
+        if (postedEntries.length === 0) {
+            container.innerHTML = '<div class="empty-state">No files loaded yet — upload or paste a CSV/TSV, or drop an .xlsx workbook.</div>';
+            return;
+        }
+        postedEntries.slice().reverse().forEach(entry => container.appendChild(buildEntryEl(entry)));
+    }
+
+    function buildEntryEl(entry) {
+        const el = document.createElement('div');
+        el.className = 'entry';
+        el.dataset.entryId = entry.id;
+
+        const totalRows = entry.sheets.reduce((m, s) => Math.max(m, s.hasHeader ? s.allRows.length - 1 : s.allRows.length), 0);
+        const sheet0 = entry.sheets[entry.activeSheet] || entry.sheets[0];
+        const colorVar = TYPE_COLORS[entry.type] || TYPE_COLORS.csv;
+
+        el.innerHTML = `
+            <div class="entry-header">
+                <span class="master-toggle" onclick="this.closest('.entry').classList.toggle('collapsed-entry')">▼</span>
+                <span class="time-tag">${entry.timeStr}</span>
+                <span class="type-badge" style="background:${colorVar}">${entry.type}</span>
+                <input type="text" class="name-input" placeholder="Name file..." value="${escapeHtml(entry.name)}" oninput="updateEntryName('${entry.id}', this.value)">
+                <span class="dims-tag" data-dims></span>
+                <div class="actions">
+                    <div class="btn-icon" title="Copy as CSV" onclick="copyAsCsv('${entry.id}', this)">${icons.copy}</div>
+                    <div class="btn-icon" title="Copy as JSON" style="color:#e8b94a" onclick="copyAsJson('${entry.id}', this)">${icons.json}</div>
+                    <div class="btn-icon" title="Copy as Markdown table" onclick="copyAsMarkdown('${entry.id}', this)">${icons.md}</div>
+                    <div class="btn-icon" title="Save as .xlsx" style="color:var(--xlsx-color)" onclick="saveAsXlsx('${entry.id}')">${icons.xlsx}</div>
+                    <div class="btn-icon" title="Save as .csv" onclick="saveAsCsv('${entry.id}')">${icons.save}</div>
+                    <div class="btn-icon" title="Focus" onclick="focusEntry(this)">${icons.focus}</div>
+                </div>
+                <div class="btn-delete" title="Remove" onclick="removeEntry('${entry.id}')">×</div>
+            </div>
+            <div class="entry-toolbar-2">
+                <label class="switch-container">
+                    <div class="switch"><input type="checkbox" ${sheet0.hasHeader ? 'checked' : ''} onchange="toggleEntryHeader('${entry.id}', this.checked)"><span class="slider"></span></div>
+                    Header row
+                </label>
+                <label class="switch-container">
+                    <div class="switch"><input type="checkbox" ${entry.filterRows ? 'checked' : ''} onchange="toggleFilterRows('${entry.id}', this.checked)"><span class="slider"></span></div>
+                    Only matches
+                </label>
+                <div class="search-container">
+                    <input type="text" class="search-inline" placeholder="Find in table..." value="${escapeHtml(entry.searchQuery || '')}" oninput="setEntrySearch('${entry.id}', this.value)" onkeydown="entrySearchNav(event, '${entry.id}')">
+                    <span class="search-counter" data-counter>0/0</span>
+                </div>
+            </div>
+            <div class="sheet-tabs" data-sheet-tabs></div>
+            <div class="content" data-content></div>
+            <div class="status-bar"><span data-status-left></span><span data-status-right></span></div>
+        `;
+
+        el.querySelector('[data-dims]').textContent = `${entry.sheets.length > 1 ? entry.sheets.length + ' sheets · ' : ''}${totalRows} row${totalRows === 1 ? '' : 's'}`;
+
+        renderSheetTabs(el, entry);
+        renderEntryTable(el, entry);
+        return el;
+    }
+
+    function renderSheetTabs(el, entry) {
+        const box = el.querySelector('[data-sheet-tabs]');
+        if (entry.sheets.length <= 1) { box.style.display = 'none'; return; }
+        box.style.display = 'flex';
+        box.innerHTML = entry.sheets.map((s, i) =>
+            `<div class="sheet-tab ${i === entry.activeSheet ? 'active' : ''}" onclick="switchSheet('${entry.id}', ${i})">${escapeHtml(s.name)}</div>`
+        ).join('');
+    }
+
+    function switchSheet(entryId, idx) {
+        const entry = findEntry(entryId);
+        if (!entry) return;
+        entry.activeSheet = idx;
+        entry.searchQuery = '';
+        rerenderEntry(entryId);
+    }
+
+    function toggleEntryHeader(entryId, checked) {
+        const entry = findEntry(entryId);
+        if (!entry) return;
+        entry.sheets[entry.activeSheet].hasHeader = checked;
+        saveEntriesToStorage();
+        rerenderEntry(entryId);
+    }
+
+    function toggleFilterRows(entryId, checked) {
+        const entry = findEntry(entryId);
+        if (!entry) return;
+        entry.filterRows = checked;
+        rerenderEntry(entryId);
+    }
+
+    function setEntrySearch(entryId, value) {
+        const entry = findEntry(entryId);
+        if (!entry) return;
+        entry.searchQuery = value;
+        rerenderEntry(entryId, true);
+    }
+
+    function entrySearchNav(e, entryId) {
+        if (e.key !== 'Enter') return;
+        const entry = findEntry(entryId);
+        if (!entry) return;
+        jumpToNextMatch(entryId);
+    }
+
+    function rerenderEntry(entryId, keepFocus = false) {
+        const entry = findEntry(entryId);
+        if (!entry) return;
+        const oldEl = document.querySelector(`.entry[data-entry-id="${CSS.escape(entryId)}"]`);
+        if (!oldEl) return;
+        const focusInput = keepFocus ? oldEl.querySelector('.search-inline') : null;
+        const selStart = focusInput ? focusInput.selectionStart : null;
+        const wasCollapsed = oldEl.classList.contains('collapsed-entry');
+        const newEl = buildEntryEl(entry);
+        if (wasCollapsed) newEl.classList.add('collapsed-entry');
+        oldEl.replaceWith(newEl);
+        if (keepFocus) {
+            const inp = newEl.querySelector('.search-inline');
+            if (inp) { inp.focus(); if (selStart !== null) inp.setSelectionRange(selStart, selStart); }
+        }
+    }
+
+    /* ---- building & sorting the visible row set ---- */
+    function getVisibleRows(sheet) {
+        const header = sheet.hasHeader ? sheet.allRows[0] : null;
+        const dataRows = sheet.hasHeader ? sheet.allRows.slice(1) : sheet.allRows.slice();
+        const colCount = Math.max(header ? header.length : 0, ...dataRows.map(r => r.length), 1);
+        const headerLabels = Array.from({ length: colCount }, (_, i) => (header && header[i] !== undefined && header[i] !== '') ? String(header[i]) : colLetter(i));
+
+        let indexed = dataRows.map((r, i) => ({ row: r, orig: i }));
+
+        const query = (sheet.filterQuery || '').toLowerCase();
+        if (query) {
+            indexed = indexed.filter(({ row }) => row.some(v => displayValue(v).toLowerCase().includes(query)));
+        }
+
+        if (sheet.sortCol !== null && sheet.sortCol !== undefined) {
+            const c = sheet.sortCol;
+            indexed = indexed.slice().sort((a, b) => {
+                const va = a.row[c], vb = b.row[c];
+                const na = parseFloat(va), nb = parseFloat(vb);
+                const bothNumeric = va !== '' && vb !== '' && va !== undefined && vb !== undefined && !isNaN(na) && !isNaN(nb) && /^-?\d+(\.\d+)?$/.test(String(va).trim()) && /^-?\d+(\.\d+)?$/.test(String(vb).trim());
+                let cmp;
+                if (bothNumeric) cmp = na - nb;
+                else cmp = displayValue(va).localeCompare(displayValue(vb), undefined, { numeric: true, sensitivity: 'base' });
+                return cmp * sheet.sortDir;
+            });
+        }
+
+        return { headerLabels, indexed, hasHeader: sheet.hasHeader, colCount };
+    }
+
+    function renderEntryTable(el, entry) {
+        const sheet = entry.sheets[entry.activeSheet];
+        sheet.filterQuery = entry.filterRows ? (entry.searchQuery || '') : '';
+        const { headerLabels, indexed, hasHeader, colCount } = getVisibleRows(sheet);
+        const contentEl = el.querySelector('[data-content]');
+        const highlightQuery = entry.searchQuery || '';
+
+        if (!indexed.length && !headerLabels.length) {
+            contentEl.innerHTML = '<div class="empty-state">This sheet is empty.</div>';
+        } else {
+            const table = document.createElement('table');
+            table.className = 'data-table';
+
+            const thead = document.createElement('thead');
+            const trh = document.createElement('tr');
+            const thRow = document.createElement('th');
+            thRow.className = 'rownum-header';
+            thRow.textContent = '#';
+            trh.appendChild(thRow);
+            headerLabels.forEach((label, ci) => {
+                const th = document.createElement('th');
+                if (isRtlText(label)) th.classList.add('cell-rtl');
+                th.onclick = () => sortByColumn(entry.id, ci);
+                let arrow = '';
+                if (sheet.sortCol === ci) arrow = `<span class="sort-arrow">${sheet.sortDir === 1 ? '▲' : '▼'}</span>`;
+                th.innerHTML = escapeHtml(label) + arrow;
+                trh.appendChild(th);
+            });
+            thead.appendChild(trh);
+            table.appendChild(thead);
+
+            const tbody = document.createElement('tbody');
+            indexed.forEach(({ row, orig }) => {
+                const tr = document.createElement('tr');
+                const rowNum = orig + (hasHeader ? 2 : 1);
+                const tdNum = document.createElement('td');
+                tdNum.className = 'rownum';
+                tdNum.textContent = rowNum;
+                tr.appendChild(tdNum);
+                for (let ci = 0; ci < colCount; ci++) {
+                    const v = row[ci];
+                    const td = document.createElement('td');
+                    const text = displayValue(v);
+                    const classes = [cellClass(v), isRtlText(text) ? 'cell-rtl' : ''].filter(Boolean);
+                    if (classes.length) td.className = classes.join(' ');
+                    td.title = text;
+                    td.innerHTML = highlightQuery ? highlightMatches(text, highlightQuery) : escapeHtml(text);
+                    tr.appendChild(td);
+                }
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+            contentEl.innerHTML = '';
+            contentEl.appendChild(table);
+        }
+
+        const totalDataRows = sheet.hasHeader ? sheet.allRows.length - 1 : sheet.allRows.length;
+        const statusLeft = el.querySelector('[data-status-left]');
+        const statusRight = el.querySelector('[data-status-right]');
+        statusLeft.textContent = `Sheet: ${sheet.name}`;
+        statusRight.textContent = entry.filterRows && highlightQuery
+            ? `showing ${indexed.length} of ${totalDataRows} rows`
+            : `${totalDataRows} row${totalDataRows === 1 ? '' : 's'} · ${headerLabels.length} column${headerLabels.length === 1 ? '' : 's'}`;
+
+        const counter = el.querySelector('[data-counter]');
+        const matches = contentEl.querySelectorAll('.match');
+        counter.textContent = matches.length ? `1/${matches.length}` : '0/0';
+        if (matches.length) { matches[0].classList.add('current'); entry._matchIndex = 0; }
+    }
+
+    function highlightMatches(text, query) {
+        if (!query) return escapeHtml(text);
+        const lower = text.toLowerCase(), q = query.toLowerCase();
+        let result = '', pos = 0, idx;
+        while ((idx = lower.indexOf(q, pos)) !== -1) {
+            result += escapeHtml(text.slice(pos, idx));
+            result += '<span class="match">' + escapeHtml(text.slice(idx, idx + q.length)) + '</span>';
+            pos = idx + q.length;
+        }
+        result += escapeHtml(text.slice(pos));
+        return result;
+    }
+
+    function jumpToNextMatch(entryId) {
+        const el = document.querySelector(`.entry[data-entry-id="${CSS.escape(entryId)}"]`);
+        if (!el) return;
+        const matches = Array.from(el.querySelectorAll('.match'));
+        if (!matches.length) return;
+        const entry = findEntry(entryId);
+        let idx = (entry._matchIndex === undefined ? -1 : entry._matchIndex) + 1;
+        if (idx >= matches.length) idx = 0;
+        matches.forEach(m => m.classList.remove('current'));
+        matches[idx].classList.add('current');
+        matches[idx].scrollIntoView({ behavior: 'smooth', block: 'center' });
+        entry._matchIndex = idx;
+        const counter = el.querySelector('[data-counter]');
+        if (counter) counter.textContent = `${idx + 1}/${matches.length}`;
+    }
+
+    function sortByColumn(entryId, colIdx) {
+        const entry = findEntry(entryId);
+        if (!entry) return;
+        const sheet = entry.sheets[entry.activeSheet];
+        if (sheet.sortCol === colIdx) {
+            if (sheet.sortDir === 1) { sheet.sortDir = -1; }
+            else { sheet.sortCol = null; sheet.sortDir = 1; }
+        } else {
+            sheet.sortCol = colIdx; sheet.sortDir = 1;
+        }
+        rerenderEntry(entryId);
+    }
+
+    /* =========================================================================
+       Focus mode
+       ========================================================================= */
+    let focusPlaceholder = null;
+
+    function focusEntry(btn) {
+        const entry = btn.closest('.entry');
+        const overlay = document.getElementById('focus-overlay');
+        focusPlaceholder = document.createComment('focus-placeholder');
+        entry.parentNode.insertBefore(focusPlaceholder, entry);
+        entry.classList.add('focused-entry');
+        overlay.appendChild(entry);
+        overlay.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function closeFocusEntry() {
+        const overlay = document.getElementById('focus-overlay');
+        const entry = overlay.querySelector('.entry.focused-entry');
+        if (entry && focusPlaceholder) {
+            entry.classList.remove('focused-entry');
+            focusPlaceholder.parentNode.insertBefore(entry, focusPlaceholder);
+            focusPlaceholder.remove();
+            focusPlaceholder = null;
+        }
+        overlay.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && document.getElementById('focus-overlay').classList.contains('active')) closeFocusEntry();
+    });
+
+    /* =========================================================================
+       Export / copy
+       ========================================================================= */
+    function flashIcon(btn, ok = true) {
+        if (!btn) return;
+        const original = btn.innerHTML;
+        btn.innerHTML = ok ? '<span style="color:#89d185;font-size:11px;font-weight:bold;">✓</span>' : '<span style="color:var(--diff-remove);font-size:11px;font-weight:bold;">!</span>';
+        setTimeout(() => btn.innerHTML = original, 800);
+    }
+
+    function activeSheetData(entryId) {
+        const entry = findEntry(entryId);
+        const sheet = entry.sheets[entry.activeSheet];
+        const header = sheet.hasHeader ? sheet.allRows[0] : null;
+        const dataRows = sheet.hasHeader ? sheet.allRows.slice(1) : sheet.allRows.slice();
+        const colCount = Math.max(header ? header.length : 0, ...dataRows.map(r => r.length), 1);
+        const headers = Array.from({ length: colCount }, (_, i) => (header && header[i] !== undefined && header[i] !== '') ? String(header[i]) : colLetter(i));
+        return { headers, rows: dataRows, hasHeader: sheet.hasHeader, name: sheet.name };
+    }
+
+    function copyAsCsv(entryId, btn) {
+        const { headers, rows, hasHeader } = activeSheetData(entryId);
+        const lines = [];
+        if (hasHeader) lines.push(headers.map(csvEscapeField).join(','));
+        rows.forEach(r => lines.push(headers.map((_, i) => csvEscapeField(r[i])).join(',')));
+        navigator.clipboard.writeText(lines.join('\r\n')).then(() => flashIcon(btn));
+    }
+
+    function copyAsJson(entryId, btn) {
+        const { headers, rows, hasHeader } = activeSheetData(entryId);
+        let out;
+        if (hasHeader) {
+            out = rows.map(r => {
+                const obj = {};
+                headers.forEach((h, i) => { obj[h] = r[i] === undefined ? '' : (isDateVal(r[i]) ? formatDate(r[i]) : r[i]); });
+                return obj;
+            });
+        } else {
+            out = rows.map(r => r.map(v => isDateVal(v) ? formatDate(v) : v));
+        }
+        navigator.clipboard.writeText(JSON.stringify(out, null, 2)).then(() => flashIcon(btn));
+    }
+
+    function copyAsMarkdown(entryId, btn) {
+        const { headers, rows, hasHeader } = activeSheetData(entryId);
+        const esc = s => String(s).replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+        const lines = [];
+        const cols = hasHeader ? headers : headers.map((_, i) => colLetter(i));
+        lines.push('| ' + cols.map(esc).join(' | ') + ' |');
+        lines.push('| ' + cols.map(() => '---').join(' | ') + ' |');
+        rows.forEach(r => lines.push('| ' + cols.map((_, i) => esc(displayValue(r[i]))).join(' | ') + ' |'));
+        navigator.clipboard.writeText(lines.join('\n')).then(() => flashIcon(btn));
+    }
+
+    function saveAsCsv(entryId) {
+        const { headers, rows, hasHeader } = activeSheetData(entryId);
+        const lines = [];
+        if (hasHeader) lines.push(headers.map(csvEscapeField).join(','));
+        rows.forEach(r => lines.push(headers.map((_, i) => csvEscapeField(r[i])).join(',')));
+        const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = defaultFilename(findEntry(entryId)) + '.csv'; a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    function saveAsXlsx(entryId) {
+        if (typeof XLSX === 'undefined') { alert('The XLSX engine did not load (no network access to the CDN in this environment).'); return; }
+        const entry = findEntry(entryId);
+        const wb = XLSX.utils.book_new();
+        entry.sheets.forEach(sheet => {
+            const ws = XLSX.utils.aoa_to_sheet(sheet.allRows.map(r => r.map(v => isDateVal(v) ? formatDate(v) : v)));
+            XLSX.utils.book_append_sheet(wb, ws, (sheet.name || 'Sheet1').slice(0, 31));
+        });
+        XLSX.writeFile(wb, defaultFilename(entry) + '.xlsx');
+    }
+
+    /* =========================================================================
+       Compare tab
+       ========================================================================= */
+    function renderCompareChips() {
+        const box = document.getElementById('compareChips');
+        if (postedEntries.length === 0) {
+            box.innerHTML = '<span class="chips-empty">No files loaded yet — add some in the Viewer tab, then come back here to compare them.</span>';
+            return;
+        }
+        box.innerHTML = '';
+        postedEntries.slice().reverse().forEach(entry => {
+            const chip = document.createElement('div');
+            chip.className = 'chip';
+            chip.draggable = true;
+            chip.title = 'Click to choose a panel, or drag onto Panel A / Panel B';
+            const dot = document.createElement('span');
+            dot.className = 'chip-dot';
+            dot.style.background = TYPE_COLORS[entry.type] || TYPE_COLORS.csv;
+            const label = document.createElement('span');
+            label.className = 'chip-name';
+            label.textContent = entryDisplayName(entry);
+            chip.appendChild(dot); chip.appendChild(label);
+            chip.onclick = e => showCompareTargetMenu(e, entry.id);
+            chip.ondragstart = e => { e.dataTransfer.setData('text/plain', entry.id); e.dataTransfer.effectAllowed = 'copy'; };
+            box.appendChild(chip);
+        });
+    }
+
+    function showCompareTargetMenu(e, entryId) {
+        e.stopPropagation();
+        let menu = document.getElementById('compare-target-menu');
+        if (!menu) {
+            menu = document.createElement('div');
+            menu.id = 'compare-target-menu';
+            menu.style.cssText = 'position:fixed;z-index:10000;background:var(--bg-elevated);color:var(--text);border:1px solid var(--border-soft);box-shadow:0 2px 8px rgba(0,0,0,0.4);border-radius:5px;padding:4px 0;min-width:150px;font-size:12px;';
+            document.body.appendChild(menu);
+        }
+        menu.innerHTML = `
+            <div class="ctx-item" data-target="compareLeft" style="padding:6px 12px;cursor:pointer;">Load into Panel A</div>
+            <div class="ctx-item" data-target="compareRight" style="padding:6px 12px;cursor:pointer;">Load into Panel B</div>
+        `;
+        menu.querySelectorAll('.ctx-item').forEach(item => {
+            item.onmouseenter = () => item.style.background = 'var(--hover-bg)';
+            item.onmouseleave = () => item.style.background = 'transparent';
+            item.onclick = () => { loadIntoComparePanel(entryId, item.dataset.target); menu.style.display = 'none'; };
+        });
+        menu.style.display = 'block';
+        menu.style.left = e.clientX + 'px';
+        menu.style.top = e.clientY + 'px';
+        setTimeout(() => {
+            const hide = () => { menu.style.display = 'none'; document.removeEventListener('click', hide); };
+            document.addEventListener('click', hide);
+        }, 0);
+    }
+
+    function allowCompareDrop(e) { e.preventDefault(); }
+    function handleCompareDrop(e, panelId) {
+        e.preventDefault();
+        e.currentTarget.classList.remove('drop-target');
+        const entryId = e.dataTransfer.getData('text/plain');
+        if (entryId) loadIntoComparePanel(entryId, panelId);
+    }
+
+    function loadIntoComparePanel(entryId, panelId) {
+        const entry = findEntry(entryId);
+        if (!entry) return;
+        const sheetIdx = entry.activeSheet || 0;
+        const sheet = entry.sheets[sheetIdx];
+        const p = comparePanels[panelId];
+        p.allRows = sheet.allRows.map(r => r.slice());
+        p.hasHeader = sheet.hasHeader;
+        p.sourceEntryId = entryId;
+        p.sourceSheetIdx = sheetIdx;
+        renderComparePanel(panelId);
+    }
+
+    function clearComparePanel(panelId) {
+        comparePanels[panelId] = emptyPanelState();
+        renderComparePanel(panelId);
+    }
+
+    function resetCompareSection() {
+        clearComparePanel('compareLeft');
+        clearComparePanel('compareRight');
+        clearCompareResults();
+    }
+
+    function startBlankPanel(panelId) {
+        const p = comparePanels[panelId];
+        p.allRows = [['Column A', 'Column B', 'Column C'], ['', '', '']];
+        p.hasHeader = true;
+        p.sourceEntryId = null;
+        renderComparePanel(panelId);
+        focusPanelCell(panelId, 'header', 0, 0);
+    }
+
+    function setComparePanelSheet(panelId, sheetIdxStr) {
+        const p = comparePanels[panelId];
+        if (!p.sourceEntryId) return;
+        const entry = findEntry(p.sourceEntryId);
+        if (!entry) return;
+        const idx = parseInt(sheetIdxStr, 10);
+        const sheet = entry.sheets[idx];
+        if (!sheet) return;
+        p.allRows = sheet.allRows.map(r => r.slice());
+        p.hasHeader = sheet.hasHeader;
+        p.sourceSheetIdx = idx;
+        renderComparePanel(panelId);
+    }
+
+    function toggleComparePanelHeader(panelId, checked) {
+        comparePanels[panelId].hasHeader = checked;
+        renderComparePanel(panelId);
+    }
+
+    function addPanelRow(panelId, focusCol) {
+        const p = comparePanels[panelId];
+        const colCount = Math.max(1, ...p.allRows.map(r => r.length));
+        p.allRows.push(new Array(colCount).fill(''));
+        renderComparePanel(panelId);
+        const newDataRowIdx = p.hasHeader ? p.allRows.length - 2 : p.allRows.length - 1;
+        focusPanelCell(panelId, 'data', newDataRowIdx, focusCol || 0);
+    }
+
+    function addPanelColumn(panelId) {
+        const p = comparePanels[panelId];
+        if (p.allRows.length === 0) p.allRows.push([]);
+        const newColIdx = Math.max(0, ...p.allRows.map(r => r.length));
+        p.allRows.forEach(r => { while (r.length < newColIdx) r.push(''); r.push(''); });
+        renderComparePanel(panelId);
+        focusPanelCell(panelId, p.hasHeader ? 'header' : 'data', 0, newColIdx);
+    }
+
+    function deletePanelRow(panelId, actualRowIdx) {
+        const p = comparePanels[panelId];
+        p.allRows.splice(actualRowIdx, 1);
+        renderComparePanel(panelId);
+    }
+
+    function deletePanelColumn(panelId, colIdx) {
+        const p = comparePanels[panelId];
+        p.allRows.forEach(r => r.splice(colIdx, 1));
+        renderComparePanel(panelId);
+    }
+
+    // Focuses a cell and selects its full contents — like landing on a cell in a real
+    // spreadsheet, so the very next keystroke overwrites it rather than inserting into
+    // whatever the caret happened to land on. DOM updates from render() are synchronous,
+    // so this can run immediately with no deferral (avoiding any race with fast typing).
+    function focusPanelCell(panelId, rowType, dataRowIdx, colIdx) {
+        const sel = `#${panelId}Content [data-row-type="${rowType}"][data-row-idx="${dataRowIdx}"][data-col-idx="${colIdx}"]`;
+        const cell = document.querySelector(sel);
+        if (!cell) return;
+        const p = comparePanels[panelId];
+        if (p) p.internalFocus = true;
+        cell.focus();
+        selectAllInCell(cell);
+        if (p) p.internalFocus = false;
+    }
+
+    function selectAllInCell(el) {
+        try {
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+        } catch (e) {}
+    }
+
+    // Derives the display header/rows purely from a panel's current allRows + hasHeader —
+    // there's no separate parsed/raw representation to keep in sync since cells are edited
+    // in place.
+    function panelDisplayData(panelId) {
+        const p = comparePanels[panelId];
+        const header = p.hasHeader ? p.allRows[0] : null;
+        const dataRows = p.hasHeader ? p.allRows.slice(1) : p.allRows.slice();
+        const colCount = Math.max(header ? header.length : 0, ...dataRows.map(r => r.length), 0);
+        const headers = Array.from({ length: colCount }, (_, i) => (header && header[i] !== undefined && header[i] !== '') ? String(header[i]) : colLetter(i));
+        return { headers, rows: dataRows, hasHeader: p.hasHeader };
+    }
+
+    function savePanelToViewer(panelId, btn) {
+        const p = comparePanels[panelId];
+        if (!p.allRows.length) { alert('Nothing to save — this panel is empty.'); return; }
+        const sourceEntry = p.sourceEntryId ? findEntry(p.sourceEntryId) : null;
+        const baseName = sourceEntry ? entryDisplayName(sourceEntry) + '_edited' : '';
+        addEntry(baseName, 'csv', [makeSheet('Sheet1', p.allRows.map(r => r.slice()), p.hasHeader)]);
+        flashIcon(btn);
+    }
+
+    // Commits an edited cell's text back into the panel's data model, and refreshes just
+    // that cell's formatting classes — never a full re-render, so focus/tab order and the
+    // caret position are never disturbed while typing.
+    function onPanelCellInput(panelId, cellEl) {
+        const p = comparePanels[panelId];
+        const rowType = cellEl.dataset.rowType;
+        const dataRowIdx = parseInt(cellEl.dataset.rowIdx, 10);
+        const colIdx = parseInt(cellEl.dataset.colIdx, 10);
+        if (p.tabAnchorCol === null) p.tabAnchorCol = colIdx;
+        const actualRowIdx = rowType === 'header' ? 0 : dataRowIdx + (p.hasHeader ? 1 : 0);
+        if (!p.allRows[actualRowIdx]) p.allRows[actualRowIdx] = [];
+        const value = cellEl.textContent;
+        p.allRows[actualRowIdx][colIdx] = value;
+        const rtl = isRtlText(value);
+        if (rowType === 'header') {
+            cellEl.classList.toggle('cell-rtl', rtl);
+        } else {
+            cellEl.className = [cellClass(value), rtl ? 'cell-rtl' : ''].filter(Boolean).join(' ');
+            cellEl.title = value;
+        }
+    }
+
+    // Enter moves down a column (adding a row past the last one); Tab / Shift+Tab move
+    // across columns and wrap to the next/previous row, like a real spreadsheet — both
+    // override the browser's native behavior so the destination cell's text is selected
+    // (see focusPanelCell) rather than just placing a caret. Like Excel/Sheets, once you
+    // start editing cells in a row, Enter returns to the column of the first cell you
+    // edited in that run (p.tabAnchorCol, set on input — not on Tab, so navigating around
+    // without typing never establishes an anchor) instead of the column you happened to
+    // end on — otherwise typing a row via Tab, Tab, ... Enter would misalign the next row.
+    function onPanelCellKeydown(e, panelId) {
+        const cellEl = e.target;
+        const rowType = cellEl.dataset.rowType;
+        const dataRowIdx = parseInt(cellEl.dataset.rowIdx, 10);
+        const colIdx = parseInt(cellEl.dataset.colIdx, 10);
+        const p = comparePanels[panelId];
+        const { headers, rows } = panelDisplayData(panelId);
+
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            const targetCol = p.tabAnchorCol !== null ? p.tabAnchorCol : colIdx;
+            p.tabAnchorCol = null;
+            const nextDataRowIdx = rowType === 'header' ? 0 : dataRowIdx + 1;
+            if (nextDataRowIdx >= rows.length) { addPanelRow(panelId, targetCol); return; }
+            focusPanelCell(panelId, 'data', nextDataRowIdx, targetCol);
+            return;
+        }
+
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            const forward = !e.shiftKey;
+            let nextRowType = rowType, nextRowIdx = dataRowIdx, nextColIdx = colIdx + (forward ? 1 : -1);
+            if (nextColIdx >= headers.length) {
+                nextColIdx = 0;
+                if (rowType === 'header') { nextRowType = 'data'; nextRowIdx = 0; }
+                else {
+                    nextRowIdx = dataRowIdx + 1;
+                    if (nextRowIdx >= rows.length) { addPanelRow(panelId); return; }
+                }
+            } else if (nextColIdx < 0) {
+                nextColIdx = headers.length - 1;
+                if (rowType === 'header') return;
+                if (dataRowIdx === 0) {
+                    if (!p.hasHeader) return;
+                    nextRowType = 'header'; nextRowIdx = 0;
+                } else {
+                    nextRowIdx = dataRowIdx - 1;
+                }
+            }
+            focusPanelCell(panelId, nextRowType, nextRowIdx, nextColIdx);
+        }
+    }
+
+    function wireEditableCells(contentEl, panelId) {
+        contentEl.querySelectorAll('[contenteditable]').forEach(cell => {
+            cell.addEventListener('input', () => onPanelCellInput(panelId, cell));
+            cell.addEventListener('keydown', e => onPanelCellKeydown(e, panelId));
+            cell.addEventListener('focus', () => {
+                const p = comparePanels[panelId];
+                if (p && !p.internalFocus) p.tabAnchorCol = null;
+            });
+        });
+    }
+
+    function renderComparePanel(panelId) {
+        const contentEl = document.getElementById(panelId + 'Content');
+        const selectEl = document.getElementById(panelId + 'SheetSelect');
+        const headerToggle = document.getElementById(panelId + 'HeaderToggle');
+        const p = comparePanels[panelId];
+        const panelLabel = panelId === 'compareLeft' ? 'Panel A' : 'Panel B';
+
+        const sourceEntry = p.sourceEntryId ? findEntry(p.sourceEntryId) : null;
+        if (sourceEntry && sourceEntry.sheets.length > 1) {
+            selectEl.style.display = 'inline-block';
+            selectEl.innerHTML = sourceEntry.sheets.map((s, i) => `<option value="${i}" ${i === p.sourceSheetIdx ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('');
+        } else {
+            selectEl.style.display = 'none';
+        }
+        headerToggle.checked = p.hasHeader;
+
+        if (!p.allRows.length) {
+            contentEl.innerHTML = `<div class="empty-state">Load a table into ${panelLabel}, or <a href="javascript:void(0)" onclick="startBlankPanel('${panelId}')" style="color:var(--accent)">start a blank one</a></div>`;
+            return;
+        }
+
+        const { headers, rows, hasHeader } = panelDisplayData(panelId);
+        const table = document.createElement('table');
+        table.className = 'data-table';
+        const thead = document.createElement('thead');
+        const trh = document.createElement('tr');
+        let headHtml = '<th class="rownum-header">#</th>';
+        headers.forEach((h, ci) => {
+            headHtml += `<th data-col="${ci}"${isRtlText(h) ? ' class="cell-rtl"' : ''}>` +
+                (hasHeader
+                    ? `<span class="cell-edit" contenteditable="true" spellcheck="false" data-row-type="header" data-row-idx="0" data-col-idx="${ci}">${escapeHtml(h)}</span>`
+                    : escapeHtml(h)) +
+                `<span class="col-del" title="Delete column" onclick="deletePanelColumn('${panelId}', ${ci})">×</span></th>`;
+        });
+        trh.innerHTML = headHtml;
+        thead.appendChild(trh);
+        table.appendChild(thead);
+        const tbody = document.createElement('tbody');
+        rows.forEach((row, orig) => {
+            const tr = document.createElement('tr');
+            tr.dataset.origRow = orig;
+            const actualRowIdx = orig + (hasHeader ? 1 : 0);
+            let cells = `<td class="rownum">${orig + (hasHeader ? 2 : 1)}<span class="row-del" title="Delete row" onclick="deletePanelRow('${panelId}', ${actualRowIdx})">×</span></td>`;
+            for (let ci = 0; ci < headers.length; ci++) {
+                const v = row[ci];
+                const text = displayValue(v);
+                const classes = [cellClass(v), isRtlText(text) ? 'cell-rtl' : ''].filter(Boolean).join(' ');
+                cells += `<td ${classes ? `class="${classes}"` : ''} contenteditable="true" spellcheck="false" data-row-type="data" data-row-idx="${orig}" data-col-idx="${ci}" data-col="${ci}" title="${escapeHtml(text)}">${escapeHtml(text)}</td>`;
+            }
+            tr.innerHTML = cells;
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        contentEl.innerHTML = '';
+        contentEl.appendChild(table);
+        wireEditableCells(contentEl, panelId);
+    }
+
+    function clearCompareResults() {
+        document.getElementById('compareResults').innerHTML = 'Load a table into each panel, then click "Compare Panels".';
+        document.querySelectorAll('.diff-row-added, .diff-row-removed, .diff-cell-changed, .diff-col-onlyA, .diff-col-onlyB').forEach(el => {
+            el.classList.remove('diff-row-added', 'diff-row-removed', 'diff-cell-changed', 'diff-col-onlyA', 'diff-col-onlyB');
+        });
+    }
+
+    function diffTables(a, b) {
+        const commonCols = a.headers.filter(h => b.headers.includes(h));
+        let colsA, colsB, labels;
+        if (a.hasHeader && b.hasHeader && commonCols.length > 0) {
+            colsA = commonCols.map(h => a.headers.indexOf(h));
+            colsB = commonCols.map(h => b.headers.indexOf(h));
+            labels = commonCols;
+        } else {
+            const n = Math.min(a.headers.length, b.headers.length);
+            colsA = Array.from({ length: n }, (_, i) => i);
+            colsB = Array.from({ length: n }, (_, i) => i);
+            labels = colsA.map(i => colLetter(i));
+        }
+        const maxRows = Math.max(a.rows.length, b.rows.length);
+        const diffs = [];
+        for (let r = 0; r < maxRows; r++) {
+            const rowA = a.rows[r], rowB = b.rows[r];
+            if (rowA === undefined) { diffs.push({ type: 'added', row: r }); continue; }
+            if (rowB === undefined) { diffs.push({ type: 'removed', row: r }); continue; }
+            const cells = [];
+            for (let k = 0; k < colsA.length; k++) {
+                const va = rowA[colsA[k]], vb = rowB[colsB[k]];
+                if (!valuesEqual(va, vb)) cells.push({ col: labels[k], colIdxA: colsA[k], colIdxB: colsB[k], oldVal: va, newVal: vb });
+            }
+            if (cells.length) diffs.push({ type: 'changed', row: r, cells });
+        }
+        // Extra columns carry their index in their own panel's header array, so the
+        // corresponding <th>/<td data-col> in that panel can be marked directly.
+        const extraColsA = a.headers.map((h, i) => ({ h, i })).filter(x => !commonCols.includes(x.h));
+        const extraColsB = b.headers.map((h, i) => ({ h, i })).filter(x => !commonCols.includes(x.h));
+        return { diffs, colsA, colsB, extraColsA, extraColsB };
+    }
+
+    let isCompareSideMode = false;
+
+    function toggleCompareDiffMode() {
+        isCompareSideMode = !isCompareSideMode;
+        document.getElementById('compareToggleDiffView').textContent = isCompareSideMode ? 'View: Side-by-Side' : 'View: List';
+        runCompare();
+    }
+
+    // Builds one diff-line's inner content (icon + text + tag); shared by both the plain
+    // list view and each half of the side-by-side view.
+    function buildDiffLineEl(type, html, onClick) {
+        const row = document.createElement('div');
+        row.className = 'diff-line diff-' + type;
+        const box = document.createElement('div');
+        box.className = 'diff-content-box';
+        const icon = document.createElement('span');
+        icon.className = 'diff-icon';
+        icon.textContent = type === 'added' ? '+' : type === 'removed' ? '−' : 'Δ';
+        const text = document.createElement('span');
+        text.className = 'diff-text';
+        text.innerHTML = html;
+        box.appendChild(icon); box.appendChild(text);
+        const tag = document.createElement('span');
+        tag.className = 'diff-tag';
+        tag.textContent = '[' + type.toUpperCase() + ']';
+        row.appendChild(box); row.appendChild(tag);
+        if (onClick) row.onclick = onClick;
+        return row;
+    }
+
+    function diffLineSpacer() {
+        const d = document.createElement('div');
+        d.className = 'diff-line-spacer';
+        return d;
+    }
+
+    function runCompare() {
+        const results = document.getElementById('compareResults');
+
+        const sheetDataA = panelDisplayData('compareLeft');
+        const sheetDataB = panelDisplayData('compareRight');
+
+        if (!sheetDataA.rows.length && !sheetDataA.headers.length) { results.innerHTML = '<div style="color:var(--diff-remove)">Add data to Panel A first — load a file, or start a blank table and type into it.</div>'; return; }
+        if (!sheetDataB.rows.length && !sheetDataB.headers.length) { results.innerHTML = '<div style="color:var(--diff-remove)">Add data to Panel B first — load a file, or start a blank table and type into it.</div>'; return; }
+
+        document.querySelectorAll('#compareLeftContent tr, #compareRightContent tr, #compareLeftContent th, #compareRightContent th').forEach(el => {
+            el.classList.remove('diff-row-added', 'diff-row-removed', 'diff-col-onlyA', 'diff-col-onlyB');
+            el.querySelectorAll && el.querySelectorAll('td').forEach(td => td.classList.remove('diff-cell-changed', 'diff-col-onlyA', 'diff-col-onlyB'));
+        });
+
+        const { diffs, extraColsA, extraColsB } = diffTables(sheetDataA, sheetDataB);
+
+        results.innerHTML = '';
+        if (diffs.length === 0 && extraColsA.length === 0 && extraColsB.length === 0) {
+            results.innerHTML = "<div style='color:#89d185'>✅ Panel A and Panel B match on their shared rows and columns.</div>";
+            return;
+        }
+
+        const summary = document.createElement('div');
+        summary.className = 'diff-summary';
+        let summaryText = `${diffs.length} row difference${diffs.length === 1 ? '' : 's'}`;
+        if (extraColsA.length) summaryText += ` · columns only in A: ${extraColsA.map(x => x.h).join(', ')}`;
+        if (extraColsB.length) summaryText += ` · columns only in B: ${extraColsB.map(x => x.h).join(', ')}`;
+        summary.textContent = summaryText;
+        results.appendChild(summary);
+
+        // Mark the panels themselves right away — independent of list vs. side-by-side,
+        // and independent of whether the user ever scrolls the text results at all.
+        extraColsA.forEach(x => {
+            const th = document.querySelector(`#compareLeftContent thead th[data-col="${x.i}"]`);
+            if (th) th.classList.add('diff-col-onlyA');
+            document.querySelectorAll(`#compareLeftContent tbody td[data-col="${x.i}"]`).forEach(td => td.classList.add('diff-col-onlyA'));
+        });
+        extraColsB.forEach(x => {
+            const th = document.querySelector(`#compareRightContent thead th[data-col="${x.i}"]`);
+            if (th) th.classList.add('diff-col-onlyB');
+            document.querySelectorAll(`#compareRightContent tbody td[data-col="${x.i}"]`).forEach(td => td.classList.add('diff-col-onlyB'));
+        });
+        diffs.forEach(d => {
+            const trA = document.querySelector(`#compareLeftContent tr[data-orig-row="${d.row}"]`);
+            const trB = document.querySelector(`#compareRightContent tr[data-orig-row="${d.row}"]`);
+            if (d.type === 'removed' && trA) trA.classList.add('diff-row-removed');
+            if (d.type === 'added' && trB) trB.classList.add('diff-row-added');
+            if (d.type === 'changed') {
+                d.cells.forEach(c => {
+                    if (trA) { const td = trA.querySelector(`td[data-col="${c.colIdxA}"]`); if (td) td.classList.add('diff-cell-changed'); }
+                    if (trB) { const td = trB.querySelector(`td[data-col="${c.colIdxB}"]`); if (td) td.classList.add('diff-cell-changed'); }
+                });
+            }
+        });
+
+        // A single ordered list of entries covers both column-level and row-level
+        // differences, so both the list view and the side-by-side view iterate it once.
+        const entries = [];
+        extraColsA.forEach(x => entries.push({ side: 'A', type: 'removed', colIdx: x.i, html: `<b>Column "${escapeHtml(x.h)}"</b> only in Panel A`, onClick: () => highlightDiffCol('compareLeft', x.i) }));
+        extraColsB.forEach(x => entries.push({ side: 'B', type: 'added', colIdx: x.i, html: `<b>Column "${escapeHtml(x.h)}"</b> only in Panel B`, onClick: () => highlightDiffCol('compareRight', x.i) }));
+        diffs.forEach(d => {
+            const rowLabel = d.row + ((d.type === 'added' ? sheetDataB.hasHeader : sheetDataA.hasHeader) ? 2 : 1);
+            if (d.type === 'changed') {
+                const oldHtml = `<b>Row ${rowLabel}</b>: ` + d.cells.map(c => `${escapeHtml(c.col)} (${escapeHtml(displayValue(c.oldVal))})`).join(', ');
+                const newHtml = `<b>Row ${rowLabel}</b>: ` + d.cells.map(c => `${escapeHtml(c.col)} (${escapeHtml(displayValue(c.newVal))})`).join(', ');
+                const bothHtml = `<b>Row ${rowLabel}</b>: ` + d.cells.map(c => `${escapeHtml(c.col)} (${escapeHtml(displayValue(c.oldVal))} → ${escapeHtml(displayValue(c.newVal))})`).join(', ');
+                entries.push({ side: 'both', type: 'changed', oldHtml, newHtml, bothHtml, onClick: () => highlightDiffRow(d) });
+            } else if (d.type === 'removed') {
+                entries.push({ side: 'A', type: 'removed', html: `<b>Row ${rowLabel}</b> only in Panel A`, onClick: () => highlightDiffRow(d) });
+            } else {
+                entries.push({ side: 'B', type: 'added', html: `<b>Row ${rowLabel}</b> only in Panel B`, onClick: () => highlightDiffRow(d) });
+            }
+        });
+
+        if (isCompareSideMode) {
+            const container = document.createElement('div');
+            container.className = 'side-diff-container';
+            const leftCol = document.createElement('div');
+            const rightCol = document.createElement('div');
+            entries.forEach(e => {
+                if (e.side === 'A') { leftCol.appendChild(buildDiffLineEl(e.type, e.html, e.onClick)); rightCol.appendChild(diffLineSpacer()); }
+                else if (e.side === 'B') { leftCol.appendChild(diffLineSpacer()); rightCol.appendChild(buildDiffLineEl(e.type, e.html, e.onClick)); }
+                else { leftCol.appendChild(buildDiffLineEl('removed', e.oldHtml, e.onClick)); rightCol.appendChild(buildDiffLineEl('added', e.newHtml, e.onClick)); }
+            });
+            container.appendChild(leftCol); container.appendChild(rightCol);
+            results.appendChild(container);
+        } else {
+            entries.forEach(e => {
+                if (e.side === 'both') results.appendChild(buildDiffLineEl('changed', e.bothHtml, e.onClick));
+                else results.appendChild(buildDiffLineEl(e.type, e.html, e.onClick));
+            });
+        }
+    }
+
+    function highlightDiffRow(d) {
+        const trA = document.querySelector(`#compareLeftContent tr[data-orig-row="${d.row}"]`);
+        const trB = document.querySelector(`#compareRightContent tr[data-orig-row="${d.row}"]`);
+        [trA, trB].forEach(tr => {
+            if (!tr) return;
+            tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            tr.classList.add('flash-row');
+            setTimeout(() => tr.classList.remove('flash-row'), 1000);
+        });
+    }
+
+    function highlightDiffCol(panelId, colIdx) {
+        const th = document.querySelector(`#${panelId}Content thead th[data-col="${colIdx}"]`);
+        const cells = document.querySelectorAll(`#${panelId}Content tbody td[data-col="${colIdx}"]`);
+        if (th) { th.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' }); }
+        [th, ...cells].forEach(el => {
+            if (!el) return;
+            el.classList.add('flash-row');
+            setTimeout(() => el.classList.remove('flash-row'), 1000);
+        });
+    }
+
+
+    /* =========================================================================
+       Init
+       ========================================================================= */
+    loadLayout();
+    renderComparePanel('compareLeft');
+    renderComparePanel('compareRight');
+    loadEntriesFromStorage();
+    if (postedEntries.length === 0) {
+        // Seed with a small illustrative example so the tool never opens empty.
+        addEntry('quarterly_sales_example', 'csv', [makeSheet('Sheet1', [
+            ['Region', 'Rep', 'Deals Closed', 'Revenue', 'Renewed'],
+            ['West', 'A. Ruiz', 14, 128400.5, true],
+            ['West', 'D. Chen', 9, 76200, false],
+            ['East', 'M. Okafor', 21, 194500, true],
+            ['East', 'S. Novak', 11, 88250.75, true],
+            ['Central', 'J. Park', 6, 41300, false]
+        ], true)], null, null, false);
+    }
+    </script>
+</body>
+</html>
