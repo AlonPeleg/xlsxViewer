@@ -2099,6 +2099,9 @@
         // className above wholesale-replaces the cell's classes (wiping any search-match
         // marker it had), so re-derive matches after — cheap enough at typical table sizes.
         if (p.searchQuery) updatePanelSearch(panelId);
+        // Mirrors every keystroke into the formula bar too — this cell is what's being typed
+        // into, so it's necessarily the current selection.
+        updateFormulaBar(panelId);
     }
 
     // Enter moves down a column (adding a row past the last one); Tab / Shift+Tab move
@@ -2286,6 +2289,7 @@
             contentEl.innerHTML = `<div class="empty-state">Load a table into ${panelLabel}, or <a href="javascript:void(0)" onclick="startBlankPanel('${panelId}')" style="color:var(--accent)">start a blank one</a></div>`;
             const counterEl = document.getElementById(panelId + 'Counter');
             if (counterEl) counterEl.textContent = '0/0';
+            updateFormulaBar(panelId);
             return;
         }
 
@@ -2335,6 +2339,11 @@
         contentEl.appendChild(table);
         wireEditableCells(contentEl, panelId);
         updatePanelSearch(panelId);
+        // Keeps the formula bar in sync with p.selectedCell on every render — most render
+        // callers that clear the selection (Reset/Clear panel, loading a new file, deleting
+        // a row/col, toggling the header) don't also refocus a cell afterward, so without
+        // this the bar would keep showing stale text from before the reset.
+        updateFormulaBar(panelId);
     }
 
     // Highlights whole cells (not substrings — see the CSS note on .cell-search-match)
