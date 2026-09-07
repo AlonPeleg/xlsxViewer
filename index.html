@@ -132,6 +132,23 @@
     .search-inline { width: 100%; background: transparent; color: var(--text); border: none; font-size: 10.5px; padding: 3px 6px; outline: none; font-family: var(--font-mono); }
     .search-counter { font-size: 9px; padding: 0 5px; opacity: 0.6; font-family: var(--font-mono); white-space: nowrap; }
 
+    /* Formula bar (next to "Find in table") — mirrors whatever cell is currently focused;
+       editing it edits that cell, just like a real spreadsheet's formula bar. */
+    .formula-bar { display: flex; align-items: center; flex: 1 1 180px; min-width: 130px; background: var(--input-bg); border: 1px solid var(--border); border-radius: 3px; }
+    .formula-bar-fx { flex-shrink: 0; padding: 3px 7px; font-family: var(--font-mono); font-style: italic; font-size: 11px; color: var(--accent); cursor: pointer; border-inline-end: 1px solid var(--border); user-select: none; border-radius: 3px 0 0 3px; }
+    .formula-bar-fx:hover { background: rgba(14,143,217,0.2); }
+    .formula-bar-input { flex: 1 1 auto; min-width: 0; background: transparent; color: var(--text); border: none; font-size: 10.5px; padding: 3px 6px; outline: none; font-family: var(--font-mono); }
+    .cell-formula { background: rgba(14,143,217,0.07); }
+    .cell-formula-error { color: var(--diff-remove); font-weight: 600; }
+
+    /* Floating "insert a function" reference list opened from the ƒx button. */
+    .formula-ref-panel { position: fixed; z-index: 500; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px var(--shadow); padding: 6px; width: 300px; max-height: 340px; overflow-y: auto; font-family: var(--font-ui); }
+    .formula-ref-item { padding: 6px 8px; border-radius: 4px; cursor: pointer; }
+    .formula-ref-item:hover { background: var(--hover-bg); }
+    .formula-ref-name { font-family: var(--font-mono); font-size: 11.5px; color: var(--accent); font-weight: 700; }
+    .formula-ref-syntax { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); margin-top: 1px; }
+    .formula-ref-desc { font-size: 10.5px; color: var(--text); margin-top: 2px; line-height: 1.3; }
+
     .sheet-tabs { display: flex; gap: 2px; padding: 5px 8px 0; flex-shrink: 0; overflow-x: auto; background: var(--bg-panel); }
     .sheet-tab { padding: 4px 10px; font-size: 10.5px; border-radius: 4px 4px 0 0; cursor: pointer; color: var(--text-dim); background: var(--bg-elevated); white-space: nowrap; border: 1px solid var(--border-soft); border-bottom: none; }
     .sheet-tab.active { color: var(--text-bright); background: var(--bg); font-weight: 700; }
@@ -207,10 +224,19 @@
     #compareLeftContent td[contenteditable]:focus, #compareRightContent td[contenteditable]:focus,
     #compareLeftContent th:focus-within, #compareRightContent th:focus-within { background: var(--sel-bg); box-shadow: inset 0 0 0 1px var(--focus); }
     #compareLeftContent .data-table th, #compareRightContent .data-table th { position: relative; }
-    #compareLeftContent .data-table th, #compareRightContent .data-table th, #compareLeftContent .data-table td.rownum, #compareRightContent .data-table td.rownum { padding-inline-end: 20px; }
+    #compareLeftContent .data-table th, #compareRightContent .data-table th, #compareLeftContent .data-table td.rownum, #compareRightContent .data-table td.rownum { padding-inline-end: 34px; }
     .col-del, .row-del { position: absolute; top: 2px; inset-inline-end: 3px; opacity: 0; cursor: pointer; color: var(--diff-remove); font-weight: bold; font-size: 12px; line-height: 1.4; padding: 0 3px; border-radius: 3px; }
+    .col-ins, .row-ins { position: absolute; top: 2px; inset-inline-end: 18px; opacity: 0; cursor: pointer; color: var(--accent); font-weight: bold; font-size: 12px; line-height: 1.4; padding: 0 3px; border-radius: 3px; }
     .col-del:hover, .row-del:hover { background: rgba(244, 135, 113, 0.25); }
-    .data-table th:hover .col-del, .data-table td.rownum:hover .row-del { opacity: 0.85; }
+    .col-ins:hover, .row-ins:hover { background: rgba(14, 143, 217, 0.25); }
+    .data-table th:hover .col-del, .data-table td.rownum:hover .row-del,
+    .data-table th:hover .col-ins, .data-table td.rownum:hover .row-ins { opacity: 0.85; }
+
+    /* Small floating menu for "insert row/column" choices (above/below, left/right) —
+       positioned in fixed coordinates near the +/insert icon that opened it. */
+    .panel-ctx-menu { position: fixed; z-index: 500; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px var(--shadow); padding: 4px; min-width: 160px; font-family: var(--font-ui); font-size: 12px; }
+    .panel-ctx-menu .ctx-item { padding: 6px 10px; border-radius: 4px; cursor: pointer; color: var(--text); white-space: nowrap; }
+    .panel-ctx-menu .ctx-item:hover { background: var(--hover-bg); color: var(--text-bright); }
     /* Marks left on the panel tables themselves after a compare, so a changed cell or a
        column that only exists on one side is obvious at a glance, not just described in
        the text results below. !important beats the table's own td/hover backgrounds. */
@@ -326,6 +352,10 @@
                             <div class="switch"><input type="checkbox" id="compareLeftHeaderToggle" checked onchange="toggleComparePanelHeader('compareLeft', this.checked)"><span class="slider"></span></div>
                             Header row
                         </label>
+                        <div class="formula-bar">
+                            <span class="formula-bar-fx" title="Insert a function" onclick="toggleFormulaRef(event, 'compareLeft')">ƒx</span>
+                            <input type="text" class="formula-bar-input" id="compareLeftFormulaBar" placeholder="Click a cell to view or edit its value or formula" oninput="onFormulaBarInput('compareLeft', this.value)" onkeydown="onFormulaBarKeydown(event, 'compareLeft')" onblur="refreshFormulaDisplays('compareLeft')">
+                        </div>
                         <div class="search-container">
                             <input type="text" class="search-inline" placeholder="Find in table..." oninput="setPanelSearch('compareLeft', this.value)" onkeydown="panelSearchNav(event, 'compareLeft')">
                             <span class="search-counter" id="compareLeftCounter">0/0</span>
@@ -354,6 +384,10 @@
                             <div class="switch"><input type="checkbox" id="compareRightHeaderToggle" checked onchange="toggleComparePanelHeader('compareRight', this.checked)"><span class="slider"></span></div>
                             Header row
                         </label>
+                        <div class="formula-bar">
+                            <span class="formula-bar-fx" title="Insert a function" onclick="toggleFormulaRef(event, 'compareRight')">ƒx</span>
+                            <input type="text" class="formula-bar-input" id="compareRightFormulaBar" placeholder="Click a cell to view or edit its value or formula" oninput="onFormulaBarInput('compareRight', this.value)" onkeydown="onFormulaBarKeydown(event, 'compareRight')" onblur="refreshFormulaDisplays('compareRight')">
+                        </div>
                         <div class="search-container">
                             <input type="text" class="search-inline" placeholder="Find in table..." oninput="setPanelSearch('compareRight', this.value)" onkeydown="panelSearchNav(event, 'compareRight')">
                             <span class="search-counter" id="compareRightCounter">0/0</span>
@@ -401,8 +435,373 @@
     // entry once loaded — editing a panel never mutates the original file. Cells are edited
     // directly in the rendered table (no separate raw-text mode).
     // { allRows: [[...]], hasHeader: bool, sourceEntryId: string|null, sourceSheetIdx: number }
-    function emptyPanelState() { return { allRows: [], hasHeader: true, sourceEntryId: null, sourceSheetIdx: 0, tabAnchorCol: null, internalFocus: false, searchQuery: '' }; }
+    // activeCell is the cell literally focused right now (raw formula text shows there, and
+    // it's skipped by the recompute pass); selectedCell is "sticky" across a blur caused by
+    // clicking a non-focusable control in the same panel (the formula bar's ƒx button, or an
+    // item in its function list) — those clicks blur the cell without anything else taking
+    // focus, so without a separate sticky field the formula bar/ƒx menu would lose track of
+    // which cell they're editing the instant you click either of them.
+    function emptyPanelState() { return { allRows: [], hasHeader: true, sourceEntryId: null, sourceSheetIdx: 0, tabAnchorCol: null, internalFocus: false, searchQuery: '', activeCell: null, selectedCell: null }; }
     const comparePanels = { compareLeft: emptyPanelState(), compareRight: emptyPanelState() };
+
+    /* ================= Formula engine =================
+       A small spreadsheet-style formula evaluator for the Compare panels. Any cell whose raw
+       text starts with "=" is treated as a formula and shows its computed result once you
+       click away from it; while it's focused, it shows the raw formula text so you can edit
+       it (the formula bar mirrors the same raw text). Supports +, -, *, /, ^ (power),
+       & (text concat), comparisons (= <> < > <= >=), parentheses, single cell references
+       (A1) and rectangular ranges (A1:B10), and the function list in FORMULA_REFERENCE below
+       (kept in sync with the switch in formulaCallFunction). */
+    const FORMULA_REFERENCE = [
+        { name: 'SUM', syntax: 'SUM(value1, [value2, ...])', desc: 'Adds all the numbers among the given cells or ranges.' },
+        { name: 'AVERAGE', syntax: 'AVERAGE(value1, [value2, ...])', desc: 'Returns the average (mean) of the given numbers.' },
+        { name: 'MIN', syntax: 'MIN(value1, [value2, ...])', desc: 'Returns the smallest number among the given values.' },
+        { name: 'MAX', syntax: 'MAX(value1, [value2, ...])', desc: 'Returns the largest number among the given values.' },
+        { name: 'COUNT', syntax: 'COUNT(value1, [value2, ...])', desc: 'Counts how many of the given values are numbers.' },
+        { name: 'COUNTA', syntax: 'COUNTA(value1, [value2, ...])', desc: 'Counts how many of the given values are non-empty.' },
+        { name: 'IF', syntax: 'IF(condition, value_if_true, value_if_false)', desc: 'Returns one value if the condition is true, otherwise the other.' },
+        { name: 'CONCAT', syntax: 'CONCAT(value1, [value2, ...])', desc: 'Joins values together as text (alias: CONCATENATE).' },
+        { name: 'ROUND', syntax: 'ROUND(number, digits)', desc: 'Rounds a number to the given number of decimal places.' },
+        { name: 'ABS', syntax: 'ABS(number)', desc: 'Returns the absolute (positive) value of a number.' },
+        { name: 'LEN', syntax: 'LEN(text)', desc: 'Returns the number of characters in a text value.' },
+        { name: 'UPPER', syntax: 'UPPER(text)', desc: 'Converts text to all uppercase.' },
+        { name: 'LOWER', syntax: 'LOWER(text)', desc: 'Converts text to all lowercase.' },
+        { name: 'TRIM', syntax: 'TRIM(text)', desc: 'Removes leading and trailing whitespace from text.' },
+        { name: 'AND', syntax: 'AND(value1, [value2, ...])', desc: 'Returns TRUE only if every argument is true.' },
+        { name: 'OR', syntax: 'OR(value1, [value2, ...])', desc: 'Returns TRUE if any argument is true.' },
+        { name: 'NOT', syntax: 'NOT(value)', desc: 'Reverses a boolean value.' },
+        { name: 'TODAY', syntax: 'TODAY()', desc: "Returns today's date." },
+        { name: 'NOW', syntax: 'NOW()', desc: 'Returns the current date and time.' },
+        { name: 'SQRT', syntax: 'SQRT(number)', desc: 'Returns the square root of a number.' },
+        { name: 'POWER', syntax: 'POWER(number, exponent)', desc: 'Raises a number to the given power.' },
+        { name: 'MOD', syntax: 'MOD(number, divisor)', desc: 'Returns the remainder after division.' },
+        { name: 'IFERROR', syntax: 'IFERROR(value, value_if_error)', desc: 'Returns value, or a fallback if value is an error.' },
+    ];
+
+    class FormulaError { constructor(code) { this.code = code; } }
+
+    function colLetterToIndex(letters) {
+        let n = 0;
+        for (let i = 0; i < letters.length; i++) n = n * 26 + (letters.charCodeAt(i) - 64);
+        return n - 1;
+    }
+
+    function formulaParseRef(ref) {
+        const m = /^\$?([A-Za-z]+)\$?([0-9]+)$/.exec(ref);
+        if (!m) throw new FormulaError('#REF!');
+        return { row: parseInt(m[2], 10) - 1, col: colLetterToIndex(m[1].toUpperCase()) };
+    }
+
+    function formulaTokenize(src) {
+        const tokens = [];
+        let i = 0;
+        const n = src.length;
+        while (i < n) {
+            const c = src[i];
+            if (/\s/.test(c)) { i++; continue; }
+            if (c === '"') {
+                let j = i + 1, s = '';
+                while (j < n && src[j] !== '"') {
+                    if (src[j] === '\\' && src[j + 1] === '"') { s += '"'; j += 2; continue; }
+                    s += src[j]; j++;
+                }
+                tokens.push({ type: 'string', value: s });
+                i = j + 1;
+                continue;
+            }
+            if (/[0-9]/.test(c) || (c === '.' && /[0-9]/.test(src[i + 1] || ''))) {
+                let j = i;
+                while (j < n && /[0-9.]/.test(src[j])) j++;
+                tokens.push({ type: 'number', value: parseFloat(src.slice(i, j)) });
+                i = j;
+                continue;
+            }
+            if (/[A-Za-z_$]/.test(c)) {
+                let j = i;
+                while (j < n && /[A-Za-z0-9_$]/.test(src[j])) j++;
+                const word = src.slice(i, j);
+                i = j;
+                if (src[i] === ':' && /^\$?[A-Za-z]+\$?[0-9]+$/.test(word)) {
+                    let k = i + 1;
+                    while (k < n && /[A-Za-z0-9$]/.test(src[k])) k++;
+                    const word2 = src.slice(i + 1, k);
+                    if (/^\$?[A-Za-z]+\$?[0-9]+$/.test(word2)) {
+                        tokens.push({ type: 'range', value: word + ':' + word2 });
+                        i = k;
+                        continue;
+                    }
+                }
+                if (/^\$?[A-Za-z]+\$?[0-9]+$/.test(word)) tokens.push({ type: 'ref', value: word });
+                else tokens.push({ type: 'ident', value: word.toUpperCase() });
+                continue;
+            }
+            if (c === '(') { tokens.push({ type: 'lparen' }); i++; continue; }
+            if (c === ')') { tokens.push({ type: 'rparen' }); i++; continue; }
+            if (c === ',') { tokens.push({ type: 'comma' }); i++; continue; }
+            if (c === '<' && src[i + 1] === '=') { tokens.push({ type: 'op', value: '<=' }); i += 2; continue; }
+            if (c === '>' && src[i + 1] === '=') { tokens.push({ type: 'op', value: '>=' }); i += 2; continue; }
+            if (c === '<' && src[i + 1] === '>') { tokens.push({ type: 'op', value: '<>' }); i += 2; continue; }
+            if ('+-*/^&=<>'.includes(c)) { tokens.push({ type: 'op', value: c }); i++; continue; }
+            throw new FormulaError('#ERROR!');
+        }
+        return tokens;
+    }
+
+    function formulaParse(tokens) {
+        let pos = 0;
+        const peek = () => tokens[pos];
+        const next = () => tokens[pos++];
+        const expect = (type) => { const t = next(); if (!t || t.type !== type) throw new FormulaError('#ERROR!'); return t; };
+        const isOp = (...vals) => { const t = peek(); return t && t.type === 'op' && vals.includes(t.value); };
+
+        function parseExpr() { return parseCompare(); }
+        function parseCompare() {
+            let left = parseConcat();
+            while (isOp('=', '<>', '<', '>', '<=', '>=')) { const op = next().value; left = { type: 'compare', op, left, right: parseConcat() }; }
+            return left;
+        }
+        function parseConcat() {
+            let left = parseAdditive();
+            while (isOp('&')) { next(); left = { type: 'concat', left, right: parseAdditive() }; }
+            return left;
+        }
+        function parseAdditive() {
+            let left = parseTerm();
+            while (isOp('+', '-')) { const op = next().value; left = { type: 'binop', op, left, right: parseTerm() }; }
+            return left;
+        }
+        function parseTerm() {
+            let left = parsePower();
+            while (isOp('*', '/')) { const op = next().value; left = { type: 'binop', op, left, right: parsePower() }; }
+            return left;
+        }
+        function parsePower() {
+            let left = parseUnary();
+            while (isOp('^')) { next(); left = { type: 'binop', op: '^', left, right: parseUnary() }; }
+            return left;
+        }
+        function parseUnary() {
+            if (isOp('-')) { next(); return { type: 'neg', value: parseUnary() }; }
+            if (isOp('+')) { next(); return parseUnary(); }
+            return parsePrimary();
+        }
+        function parsePrimary() {
+            const t = peek();
+            if (!t) throw new FormulaError('#ERROR!');
+            if (t.type === 'number') { next(); return { type: 'number', value: t.value }; }
+            if (t.type === 'string') { next(); return { type: 'string', value: t.value }; }
+            if (t.type === 'ref') { next(); return { type: 'ref', value: t.value }; }
+            if (t.type === 'range') { next(); return { type: 'range', value: t.value }; }
+            if (t.type === 'lparen') { next(); const e = parseExpr(); expect('rparen'); return e; }
+            if (t.type === 'ident') {
+                next();
+                if (t.value === 'TRUE') return { type: 'bool', value: true };
+                if (t.value === 'FALSE') return { type: 'bool', value: false };
+                if (peek() && peek().type === 'lparen') {
+                    next();
+                    const args = [];
+                    if (peek() && peek().type !== 'rparen') {
+                        args.push(parseExpr());
+                        while (peek() && peek().type === 'comma') { next(); args.push(parseExpr()); }
+                    }
+                    expect('rparen');
+                    return { type: 'call', name: t.value, args };
+                }
+                throw new FormulaError('#NAME?');
+            }
+            throw new FormulaError('#ERROR!');
+        }
+        const ast = parseExpr();
+        if (pos !== tokens.length) throw new FormulaError('#ERROR!');
+        return ast;
+    }
+
+    function formulaToNumber(v) {
+        if (v instanceof FormulaError) throw v;
+        if (v === null || v === undefined || v === '') return 0;
+        if (typeof v === 'number') return v;
+        if (typeof v === 'boolean') return v ? 1 : 0;
+        if (v instanceof Date) return v.getTime() / 86400000;
+        if (Array.isArray(v)) return NaN;
+        const n = parseFloat(v);
+        return isNaN(n) ? NaN : n;
+    }
+    function formulaToText(v) {
+        if (v instanceof FormulaError) return v.code;
+        if (v === null || v === undefined) return '';
+        if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+        if (v instanceof Date) return formatDate(v);
+        if (Array.isArray(v)) return v.map(formulaToText).join(', ');
+        return String(v);
+    }
+    function formulaToBool(v) {
+        if (v instanceof FormulaError) throw v;
+        if (typeof v === 'boolean') return v;
+        if (typeof v === 'number') return v !== 0;
+        if (typeof v === 'string') return /^true$/i.test(v.trim());
+        return !!v;
+    }
+    function formulaCompare(op, l, r) {
+        if (l instanceof FormulaError) throw l;
+        if (r instanceof FormulaError) throw r;
+        const numericish = x => x === null || typeof x === 'number' || typeof x === 'boolean' || x instanceof Date;
+        let a, b;
+        if (numericish(l) && numericish(r)) { a = formulaToNumber(l); b = formulaToNumber(r); }
+        else { a = formulaToText(l).toLowerCase(); b = formulaToText(r).toLowerCase(); }
+        switch (op) {
+            case '=': return a === b;
+            case '<>': return a !== b;
+            case '<': return a < b;
+            case '>': return a > b;
+            case '<=': return a <= b;
+            case '>=': return a >= b;
+        }
+        throw new FormulaError('#ERROR!');
+    }
+
+    function formulaGetRaw(panelId, row, col) {
+        const r = comparePanels[panelId].allRows[row];
+        return r ? r[col] : undefined;
+    }
+    function formulaCoerceRaw(raw) {
+        if (raw === undefined || raw === null || raw === '') return null;
+        if (typeof raw === 'number' || typeof raw === 'boolean' || raw instanceof Date) return raw;
+        if (typeof raw === 'string') {
+            const trimmed = raw.trim();
+            if (trimmed !== '' && /^-?\d+(\.\d+)?$/.test(trimmed)) return parseFloat(trimmed);
+            if (/^true$/i.test(trimmed)) return true;
+            if (/^false$/i.test(trimmed)) return false;
+            return raw;
+        }
+        return raw;
+    }
+    function formulaIsFormulaText(raw) { return typeof raw === 'string' && raw.trim().startsWith('='); }
+
+    // Evaluates cell (row, col) in panelId's grid, recursing into other formula cells it
+    // references. ctx.cache memoizes results within one top-level evaluation; ctx.visiting
+    // detects reference cycles (A1 referring to itself via B1, etc.) as a #CIRCULAR! error.
+    function formulaEvalCell(panelId, row, col, ctx) {
+        const key = row + ',' + col;
+        if (ctx.cache.has(key)) return ctx.cache.get(key);
+        if (ctx.visiting.has(key)) throw new FormulaError('#CIRCULAR!');
+        const raw = formulaGetRaw(panelId, row, col);
+        let result;
+        if (formulaIsFormulaText(raw)) {
+            ctx.visiting.add(key);
+            try {
+                const ast = formulaParse(formulaTokenize(raw.trim().slice(1)));
+                result = formulaEvalNode(ast, panelId, ctx);
+            } catch (e) {
+                result = e instanceof FormulaError ? e : new FormulaError('#ERROR!');
+            } finally {
+                ctx.visiting.delete(key);
+            }
+        } else {
+            result = formulaCoerceRaw(raw);
+        }
+        ctx.cache.set(key, result);
+        return result;
+    }
+
+    function formulaEvalRangeValues(rangeStr, panelId, ctx) {
+        const [a, b] = rangeStr.split(':');
+        const ra = formulaParseRef(a), rb = formulaParseRef(b);
+        const r1 = Math.min(ra.row, rb.row), r2 = Math.max(ra.row, rb.row);
+        const c1 = Math.min(ra.col, rb.col), c2 = Math.max(ra.col, rb.col);
+        const vals = [];
+        for (let r = r1; r <= r2; r++) for (let c = c1; c <= c2; c++) vals.push(formulaEvalCell(panelId, r, c, ctx));
+        return vals;
+    }
+
+    function formulaFlattenArgs(argNodes, panelId, ctx) {
+        const out = [];
+        argNodes.forEach(node => {
+            if (node.type === 'range') out.push(...formulaEvalRangeValues(node.value, panelId, ctx));
+            else out.push(formulaEvalNode(node, panelId, ctx));
+        });
+        return out;
+    }
+
+    function formulaCallFunction(name, argNodes, panelId, ctx) {
+        // Blank cells are dropped before coercion (not just filtered by isNaN afterward) —
+        // otherwise formulaToNumber's null->0 coercion would make AVERAGE/COUNT/etc. treat
+        // an empty cell the same as an explicit 0, which real spreadsheets never do.
+        const nums = () => formulaFlattenArgs(argNodes, panelId, ctx).filter(v => v !== null && v !== '' && v !== undefined).map(formulaToNumber).filter(n => !isNaN(n));
+        const allVals = () => formulaFlattenArgs(argNodes, panelId, ctx);
+        switch (name) {
+            case 'SUM': return nums().reduce((a, b) => a + b, 0);
+            case 'AVERAGE': case 'AVG': { const ns = nums(); if (!ns.length) throw new FormulaError('#DIV/0!'); return ns.reduce((a, b) => a + b, 0) / ns.length; }
+            case 'MIN': { const ns = nums(); return ns.length ? Math.min(...ns) : 0; }
+            case 'MAX': { const ns = nums(); return ns.length ? Math.max(...ns) : 0; }
+            case 'COUNT': return nums().length;
+            case 'COUNTA': return allVals().filter(v => v !== null && v !== '' && v !== undefined).length;
+            case 'IF': {
+                if (argNodes.length < 2) throw new FormulaError('#ERROR!');
+                const cond = formulaToBool(formulaEvalNode(argNodes[0], panelId, ctx));
+                if (cond) return formulaEvalNode(argNodes[1], panelId, ctx);
+                return argNodes[2] !== undefined ? formulaEvalNode(argNodes[2], panelId, ctx) : false;
+            }
+            case 'CONCAT': case 'CONCATENATE': return allVals().map(formulaToText).join('');
+            case 'ROUND': { const a = formulaFlattenArgs(argNodes, panelId, ctx).map(formulaToNumber); const mult = Math.pow(10, isNaN(a[1]) ? 0 : a[1]); return Math.round(a[0] * mult) / mult; }
+            case 'ABS': return Math.abs(formulaToNumber(formulaEvalNode(argNodes[0], panelId, ctx)));
+            case 'LEN': return formulaToText(formulaEvalNode(argNodes[0], panelId, ctx)).length;
+            case 'UPPER': return formulaToText(formulaEvalNode(argNodes[0], panelId, ctx)).toUpperCase();
+            case 'LOWER': return formulaToText(formulaEvalNode(argNodes[0], panelId, ctx)).toLowerCase();
+            case 'TRIM': return formulaToText(formulaEvalNode(argNodes[0], panelId, ctx)).trim();
+            case 'AND': return allVals().every(formulaToBool);
+            case 'OR': return allVals().some(formulaToBool);
+            case 'NOT': return !formulaToBool(formulaEvalNode(argNodes[0], panelId, ctx));
+            case 'TODAY': return new Date(new Date().toDateString());
+            case 'NOW': return new Date();
+            case 'SQRT': { const v = formulaToNumber(formulaEvalNode(argNodes[0], panelId, ctx)); if (v < 0) throw new FormulaError('#NUM!'); return Math.sqrt(v); }
+            case 'POWER': { const a = formulaFlattenArgs(argNodes, panelId, ctx).map(formulaToNumber); return Math.pow(a[0], a[1]); }
+            case 'MOD': { const a = formulaFlattenArgs(argNodes, panelId, ctx).map(formulaToNumber); if (a[1] === 0) throw new FormulaError('#DIV/0!'); return a[0] % a[1]; }
+            case 'IFERROR': {
+                try { return formulaEvalNode(argNodes[0], panelId, ctx); }
+                catch (e) { return argNodes[1] !== undefined ? formulaEvalNode(argNodes[1], panelId, ctx) : ''; }
+            }
+            default: throw new FormulaError('#NAME?');
+        }
+    }
+
+    function formulaEvalNode(node, panelId, ctx) {
+        switch (node.type) {
+            case 'number': return node.value;
+            case 'string': return node.value;
+            case 'bool': return node.value;
+            case 'ref': { const { row, col } = formulaParseRef(node.value); return formulaEvalCell(panelId, row, col, ctx); }
+            case 'range': return formulaEvalRangeValues(node.value, panelId, ctx);
+            case 'neg': return -formulaToNumber(formulaEvalNode(node.value, panelId, ctx));
+            case 'binop': {
+                const a = formulaToNumber(formulaEvalNode(node.left, panelId, ctx));
+                const b = formulaToNumber(formulaEvalNode(node.right, panelId, ctx));
+                switch (node.op) {
+                    case '+': return a + b;
+                    case '-': return a - b;
+                    case '*': return a * b;
+                    case '/': if (b === 0) throw new FormulaError('#DIV/0!'); return a / b;
+                    case '^': return Math.pow(a, b);
+                }
+                break;
+            }
+            case 'concat': return formulaToText(formulaEvalNode(node.left, panelId, ctx)) + formulaToText(formulaEvalNode(node.right, panelId, ctx));
+            case 'compare': return formulaCompare(node.op, formulaEvalNode(node.left, panelId, ctx), formulaEvalNode(node.right, panelId, ctx));
+            case 'call': return formulaCallFunction(node.name, node.args, panelId, ctx);
+        }
+        throw new FormulaError('#ERROR!');
+    }
+
+    // Top-level entry point: computes the displayed result of the formula (or plain value)
+    // stored at (row, col) in panelId's grid. row/col are absolute grid coordinates (row 0 is
+    // the very first row of allRows, header included) — the same numbering the "#" column and
+    // A1-style references both use.
+    function computeFormulaCell(panelId, row, col) {
+        const ctx = { cache: new Map(), visiting: new Set() };
+        try { return formulaEvalCell(panelId, row, col, ctx); }
+        catch (e) { return e instanceof FormulaError ? e : new FormulaError('#ERROR!'); }
+    }
+    function formulaResultText(v) { return v instanceof FormulaError ? v.code : displayValue(v); }
+    function formulaResultClass(v) { return v instanceof FormulaError ? 'cell-formula-error' : cellClass(v); }
 
     const icons = {
         save: `<svg viewBox="0 0 16 16" fill="currentColor"><path d="M14 0H2a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2zM4 1h8v4H4V1zm10 13H2V2h1v4h10V2h1v12zM5 10h6v3H5v-3z"/></svg>`,
@@ -742,8 +1141,16 @@
         return (entry.name && entry.name.trim()) ? entry.name.trim() : `${entry.type.toUpperCase()} @ ${entry.timeStr}`;
     }
 
+    // Only strips characters that are actually illegal in filenames (and collapses
+    // whitespace) — it used to strip anything outside \w (ASCII letters/digits/underscore),
+    // which turned every non-Latin name (Hebrew, Arabic, CJK, accented text, ...) into a
+    // string of underscores. Unicode letters/digits are left alone.
     function defaultFilename(entry) {
-        return (entry.name && entry.name.trim()) ? entry.name.trim().replace(/[^\w.-]+/g, '_') : 'table_export';
+        if (!(entry.name && entry.name.trim())) return 'table_export';
+        return entry.name.trim()
+            .replace(/[\\/:*?"<>|]+/g, '_')
+            .replace(/\s+/g, '_')
+            .slice(0, 150) || 'table_export';
     }
 
     /* ---- rendering the full entry list ---- */
@@ -1079,7 +1486,7 @@
         navigator.clipboard.writeText(lines.join('\r\n')).then(() => flashIcon(btn));
     }
     function copyAsCsv(entryId, btn) { copyAsCsvData(activeSheetData(entryId), btn); }
-    function copyPanelAsCsv(panelId, btn) { copyAsCsvData(panelDisplayData(panelId), btn); }
+    function copyPanelAsCsv(panelId, btn) { copyAsCsvData(panelDisplayDataResolved(panelId), btn); }
 
     function copyAsJsonData(sheetData, btn) {
         const { headers, rows, hasHeader } = sheetData;
@@ -1096,7 +1503,7 @@
         navigator.clipboard.writeText(JSON.stringify(out, null, 2)).then(() => flashIcon(btn));
     }
     function copyAsJson(entryId, btn) { copyAsJsonData(activeSheetData(entryId), btn); }
-    function copyPanelAsJson(panelId, btn) { copyAsJsonData(panelDisplayData(panelId), btn); }
+    function copyPanelAsJson(panelId, btn) { copyAsJsonData(panelDisplayDataResolved(panelId), btn); }
 
     function copyAsMarkdownData(sheetData, btn) {
         const { headers, rows, hasHeader } = sheetData;
@@ -1109,7 +1516,7 @@
         navigator.clipboard.writeText(lines.join('\n')).then(() => flashIcon(btn));
     }
     function copyAsMarkdown(entryId, btn) { copyAsMarkdownData(activeSheetData(entryId), btn); }
-    function copyPanelAsMarkdown(panelId, btn) { copyAsMarkdownData(panelDisplayData(panelId), btn); }
+    function copyPanelAsMarkdown(panelId, btn) { copyAsMarkdownData(panelDisplayDataResolved(panelId), btn); }
 
     function saveAsCsvData(sheetData, filename) {
         const { headers, rows, hasHeader } = sheetData;
@@ -1123,7 +1530,7 @@
         URL.revokeObjectURL(url);
     }
     function saveAsCsv(entryId) { saveAsCsvData(activeSheetData(entryId), defaultFilename(findEntry(entryId))); }
-    function savePanelAsCsv(panelId) { saveAsCsvData(panelDisplayData(panelId), panelFilename(panelId)); }
+    function savePanelAsCsv(panelId) { saveAsCsvData(panelDisplayDataResolved(panelId), panelFilename(panelId)); }
 
     function saveAsXlsx(entryId) {
         if (typeof XLSX === 'undefined') { alert('The XLSX engine did not load (no network access to the CDN in this environment).'); return; }
@@ -1145,11 +1552,30 @@
         return panelId === 'compareLeft' ? 'panel_a' : 'panel_b';
     }
 
+    // Builds the worksheet from the *computed* values (so numbers/dates get proper xlsx
+    // cell types, same as every other export here) and then stamps a real Excel formula
+    // (the ".f" property) onto every formula cell — its computed value stays as the shown
+    // result, but the formula itself round-trips into Excel/Sheets as a live, editable
+    // formula rather than dead text, since our A1/range addressing is the same convention.
     function savePanelAsXlsx(panelId) {
         if (typeof XLSX === 'undefined') { alert('The XLSX engine did not load (no network access to the CDN in this environment).'); return; }
         const p = comparePanels[panelId];
+        const computedRows = p.allRows.map((row, r) => row.map((v, c) => {
+            if (formulaIsFormulaText(v)) {
+                const result = computeFormulaCell(panelId, r, c);
+                if (result instanceof FormulaError) return result.code;
+                return isDateVal(result) ? formatDate(result) : result;
+            }
+            return isDateVal(v) ? formatDate(v) : v;
+        }));
+        const ws = XLSX.utils.aoa_to_sheet(computedRows);
+        p.allRows.forEach((row, r) => row.forEach((v, c) => {
+            if (formulaIsFormulaText(v)) {
+                const addr = XLSX.utils.encode_cell({ r, c });
+                if (ws[addr]) ws[addr].f = v.trim().slice(1);
+            }
+        }));
         const wb = XLSX.utils.book_new();
-        const ws = XLSX.utils.aoa_to_sheet(p.allRows.map(r => r.map(v => isDateVal(v) ? formatDate(v) : v)));
         XLSX.utils.book_append_sheet(wb, ws, (panelId === 'compareLeft' ? 'Panel A' : 'Panel B'));
         XLSX.writeFile(wb, panelFilename(panelId) + '.xlsx');
     }
@@ -1227,6 +1653,8 @@
         p.hasHeader = sheet.hasHeader;
         p.sourceEntryId = entryId;
         p.sourceSheetIdx = sheetIdx;
+        p.activeCell = null;
+        p.selectedCell = null;
         renderComparePanel(panelId);
     }
 
@@ -1246,6 +1674,8 @@
         p.allRows = [['Column A', 'Column B', 'Column C'], ['', '', '']];
         p.hasHeader = true;
         p.sourceEntryId = null;
+        p.activeCell = null;
+        p.selectedCell = null;
         renderComparePanel(panelId);
         focusPanelCell(panelId, 'header', 0, 0);
     }
@@ -1261,18 +1691,28 @@
         p.allRows = sheet.allRows.map(r => r.slice());
         p.hasHeader = sheet.hasHeader;
         p.sourceSheetIdx = idx;
+        p.activeCell = null;
+        p.selectedCell = null;
         renderComparePanel(panelId);
     }
 
     function toggleComparePanelHeader(panelId, checked) {
         comparePanels[panelId].hasHeader = checked;
+        comparePanels[panelId].activeCell = null;
+        comparePanels[panelId].selectedCell = null;
         renderComparePanel(panelId);
     }
 
+    // Every structural mutation below clears p.activeCell first: once rows/columns shift,
+    // whatever coordinate was "active" no longer means the same cell, and the render right
+    // after (or the focusPanelCell call following it) re-establishes it correctly via a
+    // fresh focus event rather than carrying a stale, possibly-wrong reference forward.
     function addPanelRow(panelId, focusCol) {
         const p = comparePanels[panelId];
         const colCount = Math.max(1, ...p.allRows.map(r => r.length));
         p.allRows.push(new Array(colCount).fill(''));
+        p.activeCell = null;
+        p.selectedCell = null;
         renderComparePanel(panelId);
         const newDataRowIdx = p.hasHeader ? p.allRows.length - 2 : p.allRows.length - 1;
         focusPanelCell(panelId, 'data', newDataRowIdx, focusCol || 0);
@@ -1283,6 +1723,8 @@
         if (p.allRows.length === 0) p.allRows.push([]);
         const newColIdx = Math.max(0, ...p.allRows.map(r => r.length));
         p.allRows.forEach(r => { while (r.length < newColIdx) r.push(''); r.push(''); });
+        p.activeCell = null;
+        p.selectedCell = null;
         renderComparePanel(panelId);
         focusPanelCell(panelId, p.hasHeader ? 'header' : 'data', 0, newColIdx);
     }
@@ -1290,13 +1732,157 @@
     function deletePanelRow(panelId, actualRowIdx) {
         const p = comparePanels[panelId];
         p.allRows.splice(actualRowIdx, 1);
+        p.activeCell = null;
+        p.selectedCell = null;
         renderComparePanel(panelId);
     }
 
     function deletePanelColumn(panelId, colIdx) {
         const p = comparePanels[panelId];
         p.allRows.forEach(r => r.splice(colIdx, 1));
+        p.activeCell = null;
+        p.selectedCell = null;
         renderComparePanel(panelId);
+    }
+
+    // Inserts a blank row at a specific position in allRows (not just at the end, like
+    // addPanelRow) — atActualIdx is an index into allRows itself, so it already accounts
+    // for the header row when hasHeader is true.
+    function insertPanelRow(panelId, atActualIdx) {
+        const p = comparePanels[panelId];
+        const colCount = Math.max(1, ...p.allRows.map(r => r.length));
+        atActualIdx = Math.max(0, Math.min(atActualIdx, p.allRows.length));
+        p.allRows.splice(atActualIdx, 0, new Array(colCount).fill(''));
+        p.activeCell = null;
+        p.selectedCell = null;
+        renderComparePanel(panelId);
+        const newDataRowIdx = p.hasHeader ? atActualIdx - 1 : atActualIdx;
+        if (newDataRowIdx >= 0) focusPanelCell(panelId, 'data', newDataRowIdx, 0);
+    }
+
+    // Inserts a blank column at atColIdx across every row (header included), padding any
+    // ragged shorter rows out to that index first so the new column lines up everywhere.
+    function insertPanelColumn(panelId, atColIdx) {
+        const p = comparePanels[panelId];
+        if (p.allRows.length === 0) p.allRows.push([]);
+        atColIdx = Math.max(0, atColIdx);
+        p.allRows.forEach(r => { while (r.length < atColIdx) r.push(''); r.splice(atColIdx, 0, ''); });
+        p.activeCell = null;
+        p.selectedCell = null;
+        renderComparePanel(panelId);
+        focusPanelCell(panelId, p.hasHeader ? 'header' : 'data', 0, atColIdx);
+    }
+
+    // Small floating menu used to offer "insert above/below" or "insert left/right" choices
+    // from the +/insert icon on a row-number cell or column header. Closes on the next click
+    // or scroll anywhere, or on Escape.
+    let activePanelCtxMenu = null;
+    function closePanelCtxMenu() {
+        if (!activePanelCtxMenu) return;
+        activePanelCtxMenu.remove();
+        activePanelCtxMenu = null;
+        document.removeEventListener('click', closePanelCtxMenu);
+        document.removeEventListener('keydown', panelCtxMenuKeydown);
+    }
+    function panelCtxMenuKeydown(e) { if (e.key === 'Escape') closePanelCtxMenu(); }
+    function showPanelCtxMenu(x, y, items) {
+        closePanelCtxMenu();
+        const menu = document.createElement('div');
+        menu.className = 'panel-ctx-menu';
+        items.forEach(it => {
+            const item = document.createElement('div');
+            item.className = 'ctx-item';
+            item.textContent = it.label;
+            item.onclick = (e) => { e.stopPropagation(); closePanelCtxMenu(); it.action(); };
+            menu.appendChild(item);
+        });
+        document.body.appendChild(menu);
+        const rect = menu.getBoundingClientRect();
+        let left = x, top = y;
+        if (left + rect.width > window.innerWidth) left = Math.max(4, window.innerWidth - rect.width - 6);
+        if (top + rect.height > window.innerHeight) top = Math.max(4, window.innerHeight - rect.height - 6);
+        menu.style.left = left + 'px';
+        menu.style.top = top + 'px';
+        activePanelCtxMenu = menu;
+        setTimeout(() => {
+            document.addEventListener('click', closePanelCtxMenu);
+            document.addEventListener('keydown', panelCtxMenuKeydown);
+        }, 0);
+    }
+    // Any scroll anywhere invalidates the menu's fixed-position anchor, so just close it.
+    document.addEventListener('scroll', () => closePanelCtxMenu(), true);
+
+    function openRowInsertMenu(e, panelId, actualRowIdx) {
+        e.stopPropagation();
+        const rect = e.currentTarget.getBoundingClientRect();
+        showPanelCtxMenu(rect.left, rect.bottom + 4, [
+            { label: 'Insert row above', action: () => insertPanelRow(panelId, actualRowIdx) },
+            { label: 'Insert row below', action: () => insertPanelRow(panelId, actualRowIdx + 1) },
+        ]);
+    }
+
+    function openColInsertMenu(e, panelId, colIdx) {
+        e.stopPropagation();
+        const rect = e.currentTarget.getBoundingClientRect();
+        showPanelCtxMenu(rect.left, rect.bottom + 4, [
+            { label: 'Insert column left', action: () => insertPanelColumn(panelId, colIdx) },
+            { label: 'Insert column right', action: () => insertPanelColumn(panelId, colIdx + 1) },
+        ]);
+    }
+
+    // The ƒx button's function reference list — a richer floating panel than the plain
+    // insert-row/column menu above, so it's built directly rather than through
+    // showPanelCtxMenu, but it still shares that same activePanelCtxMenu/closePanelCtxMenu
+    // bookkeeping so it closes the same way (outside click, scroll, Escape, or opening
+    // something else).
+    function toggleFormulaRef(e, panelId) {
+        e.stopPropagation();
+        if (activePanelCtxMenu && activePanelCtxMenu.dataset.formulaRefFor === panelId) { closePanelCtxMenu(); return; }
+        closePanelCtxMenu();
+        const rect = e.currentTarget.getBoundingClientRect();
+        const menu = document.createElement('div');
+        menu.className = 'formula-ref-panel';
+        menu.dataset.formulaRefFor = panelId;
+        FORMULA_REFERENCE.forEach(fn => {
+            const item = document.createElement('div');
+            item.className = 'formula-ref-item';
+            item.innerHTML = `<div class="formula-ref-name">${escapeHtml(fn.name)}</div>` +
+                `<div class="formula-ref-syntax">${escapeHtml(fn.syntax)}</div>` +
+                `<div class="formula-ref-desc">${escapeHtml(fn.desc)}</div>`;
+            item.onclick = (ev) => { ev.stopPropagation(); closePanelCtxMenu(); insertFormulaTemplate(panelId, fn.name); };
+            menu.appendChild(item);
+        });
+        document.body.appendChild(menu);
+        const mrect = menu.getBoundingClientRect();
+        let left = rect.left, top = rect.bottom + 4;
+        if (left + mrect.width > window.innerWidth) left = Math.max(4, window.innerWidth - mrect.width - 6);
+        if (top + mrect.height > window.innerHeight) top = Math.max(4, rect.top - mrect.height - 4);
+        menu.style.left = left + 'px';
+        menu.style.top = top + 'px';
+        activePanelCtxMenu = menu;
+        setTimeout(() => {
+            document.addEventListener('click', closePanelCtxMenu);
+            document.addEventListener('keydown', panelCtxMenuKeydown);
+        }, 0);
+    }
+
+    // Inserts "FUNC()" into the formula bar (appended if it's already a formula, or started
+    // fresh with "=" otherwise) and into the currently-selected cell, then leaves the caret
+    // between the parens so you can type the arguments right away.
+    function insertFormulaTemplate(panelId, fnName) {
+        const p = comparePanels[panelId];
+        if (!p.selectedCell) { alert('Click a cell first, then choose a function to insert into it.'); return; }
+        const bar = document.getElementById(panelId + 'FormulaBar');
+        const current = bar ? bar.value : '';
+        const template = fnName + '()';
+        const newVal = (current && current.trim().startsWith('=')) ? current + template : '=' + template;
+        if (bar) bar.value = newVal;
+        onFormulaBarInput(panelId, newVal);
+        if (bar) {
+            bar.focus();
+            const caretPos = newVal.length - 1;
+            bar.setSelectionRange(caretPos, caretPos);
+        }
     }
 
     // Focuses a cell and selects its full contents — like landing on a cell in a real
@@ -1336,12 +1922,35 @@
         return { headers, rows: dataRows, hasHeader: p.hasHeader };
     }
 
+    // Same shape as panelDisplayData, but every formula cell is replaced with its computed
+    // result. Used by every plain export/copy action (CSV, JSON, Markdown, "save to Viewer")
+    // since none of those formats has a concept of a live formula — they should show the
+    // number or text the user actually sees, not the literal "=..." text. XLSX export is the
+    // one exception (see savePanelAsXlsx), since a real .xlsx file *can* carry a live formula.
+    function panelDisplayDataResolved(panelId) {
+        const { headers, rows, hasHeader } = panelDisplayData(panelId);
+        const resolvedRows = rows.map((row, orig) => {
+            const actualRow = orig + (hasHeader ? 1 : 0);
+            return row.map((v, ci) => {
+                if (!formulaIsFormulaText(v)) return v;
+                const result = computeFormulaCell(panelId, actualRow, ci);
+                return result instanceof FormulaError ? result.code : result;
+            });
+        });
+        return { headers, rows: resolvedRows, hasHeader };
+    }
+
     function savePanelToViewer(panelId, btn) {
         const p = comparePanels[panelId];
         if (!p.allRows.length) { alert('Nothing to save — this panel is empty.'); return; }
         const sourceEntry = p.sourceEntryId ? findEntry(p.sourceEntryId) : null;
         const baseName = sourceEntry ? entryDisplayName(sourceEntry) + '_edited' : '';
-        addEntry(baseName, 'csv', [makeSheet('Sheet1', p.allRows.map(r => r.slice()), p.hasHeader)]);
+        const resolvedAllRows = p.allRows.map((row, r) => row.map((v, c) => {
+            if (!formulaIsFormulaText(v)) return v;
+            const result = computeFormulaCell(panelId, r, c);
+            return result instanceof FormulaError ? result.code : result;
+        }));
+        addEntry(baseName, 'csv', [makeSheet('Sheet1', resolvedAllRows, p.hasHeader)]);
         flashIcon(btn);
     }
 
@@ -1427,9 +2036,112 @@
             cell.addEventListener('keydown', e => onPanelCellKeydown(e, panelId));
             cell.addEventListener('focus', () => {
                 const p = comparePanels[panelId];
-                if (p && !p.internalFocus) p.tabAnchorCol = null;
+                if (!p) return;
+                if (!p.internalFocus) p.tabAnchorCol = null;
+                const rowType = cell.dataset.rowType;
+                const dataRowIdx = parseInt(cell.dataset.rowIdx, 10);
+                const colIdx = parseInt(cell.dataset.colIdx, 10);
+                const loc = { rowType, dataRowIdx, colIdx };
+                p.activeCell = loc;
+                p.selectedCell = loc;
+                // Formula cells show their computed result until you focus them — then, like
+                // a real spreadsheet, the cell itself flips to showing the raw "=..." text so
+                // you can edit it (the formula bar mirrors the same raw text either way).
+                if (rowType === 'data') {
+                    const actualRow = dataRowIdx + (p.hasHeader ? 1 : 0);
+                    const raw = (p.allRows[actualRow] || [])[colIdx];
+                    if (formulaIsFormulaText(raw) && cell.textContent !== raw) {
+                        cell.textContent = raw;
+                        selectAllInCell(cell);
+                    }
+                }
+                updateFormulaBar(panelId);
+            });
+            cell.addEventListener('blur', () => {
+                const p = comparePanels[panelId];
+                if (!p) return;
+                const rowType = cell.dataset.rowType;
+                const dataRowIdx = parseInt(cell.dataset.rowIdx, 10);
+                const colIdx = parseInt(cell.dataset.colIdx, 10);
+                // Only activeCell clears here — that's what makes the cell itself flip back
+                // to showing its computed result. selectedCell deliberately stays put: a
+                // click on the formula bar or the ƒx function list also blurs this cell (a
+                // plain <span>/<div> isn't focusable, so focus falls back to <body>) without
+                // truly "deselecting" it from the user's point of view, and those two rely on
+                // selectedCell to know which cell they're still editing.
+                if (p.activeCell && p.activeCell.rowType === rowType && p.activeCell.dataRowIdx === dataRowIdx && p.activeCell.colIdx === colIdx) {
+                    p.activeCell = null;
+                }
+                refreshFormulaDisplays(panelId);
             });
         });
+    }
+
+    // Recomputes and redraws every formula cell's shown result in place (no full table
+    // rebuild — that would tear down and recreate DOM nodes mid-focus-transfer and risk
+    // losing keyboard navigation). Called whenever a cell or the formula bar commits an
+    // edit, since any cell's new value can change what other formula cells that reference it
+    // display. The cell currently being edited (p.activeCell) is left untouched.
+    function refreshFormulaDisplays(panelId) {
+        const p = comparePanels[panelId];
+        if (!p) return;
+        const contentEl = document.getElementById(panelId + 'Content');
+        if (!contentEl) return;
+        contentEl.querySelectorAll('td[data-row-type="data"]').forEach(td => {
+            const dataRowIdx = parseInt(td.dataset.rowIdx, 10);
+            const colIdx = parseInt(td.dataset.colIdx, 10);
+            const isActive = p.activeCell && p.activeCell.rowType === 'data' && p.activeCell.dataRowIdx === dataRowIdx && p.activeCell.colIdx === colIdx;
+            if (isActive) return;
+            const actualRow = dataRowIdx + (p.hasHeader ? 1 : 0);
+            const raw = (p.allRows[actualRow] || [])[colIdx];
+            let text, classes;
+            if (formulaIsFormulaText(raw)) {
+                const result = computeFormulaCell(panelId, actualRow, colIdx);
+                text = formulaResultText(result);
+                classes = [formulaResultClass(result), 'cell-formula', isRtlText(text) ? 'cell-rtl' : ''].filter(Boolean).join(' ');
+            } else {
+                text = displayValue(raw);
+                classes = [cellClass(raw), isRtlText(text) ? 'cell-rtl' : ''].filter(Boolean).join(' ');
+            }
+            if (td.textContent !== text) td.textContent = text;
+            td.title = text;
+            td.className = classes;
+        });
+        if (p.searchQuery) updatePanelSearch(panelId);
+    }
+
+    // The formula bar mirrors whatever cell is currently selected (p.selectedCell, which —
+    // unlike p.activeCell — survives the blur caused by clicking the bar or the ƒx menu
+    // themselves) — reading a formula cell's raw "=..." text there without having to focus
+    // the cell itself, and editing it there keystroke-for-keystroke updates the cell (see
+    // onFormulaBarInput).
+    function updateFormulaBar(panelId) {
+        const bar = document.getElementById(panelId + 'FormulaBar');
+        if (!bar) return;
+        const p = comparePanels[panelId];
+        if (!p || !p.selectedCell) { bar.value = ''; return; }
+        const { rowType, dataRowIdx, colIdx } = p.selectedCell;
+        const actualRow = rowType === 'header' ? 0 : dataRowIdx + (p.hasHeader ? 1 : 0);
+        const raw = (p.allRows[actualRow] || [])[colIdx];
+        bar.value = (raw === undefined || raw === null) ? '' : String(raw);
+    }
+
+    function onFormulaBarInput(panelId, value) {
+        const p = comparePanels[panelId];
+        if (!p || !p.selectedCell) return;
+        const { rowType, dataRowIdx, colIdx } = p.selectedCell;
+        const sel = `#${panelId}Content [data-row-type="${rowType}"][data-row-idx="${dataRowIdx}"][data-col-idx="${colIdx}"]`;
+        const cell = document.querySelector(sel);
+        if (!cell) return;
+        cell.textContent = value;
+        onPanelCellInput(panelId, cell);
+    }
+
+    function onFormulaBarKeydown(e, panelId) {
+        if (e.key === 'Enter' || e.key === 'Escape') {
+            e.preventDefault();
+            e.target.blur();
+        }
     }
 
     function renderComparePanel(panelId) {
@@ -1466,6 +2178,7 @@
                 (hasHeader
                     ? `<span class="cell-edit" contenteditable="true" spellcheck="false" data-row-type="header" data-row-idx="0" data-col-idx="${ci}">${escapeHtml(h)}</span>`
                     : escapeHtml(h)) +
+                `<span class="col-ins" title="Insert column" onclick="openColInsertMenu(event, '${panelId}', ${ci})">+</span>` +
                 `<span class="col-del" title="Delete column" onclick="deletePanelColumn('${panelId}', ${ci})">×</span></th>`;
         });
         trh.innerHTML = headHtml;
@@ -1476,11 +2189,20 @@
             const tr = document.createElement('tr');
             tr.dataset.origRow = orig;
             const actualRowIdx = orig + (hasHeader ? 1 : 0);
-            let cells = `<td class="rownum">${orig + (hasHeader ? 2 : 1)}<span class="row-del" title="Delete row" onclick="deletePanelRow('${panelId}', ${actualRowIdx})">×</span></td>`;
+            let cells = `<td class="rownum">${orig + (hasHeader ? 2 : 1)}<span class="row-ins" title="Insert row" onclick="openRowInsertMenu(event, '${panelId}', ${actualRowIdx})">+</span><span class="row-del" title="Delete row" onclick="deletePanelRow('${panelId}', ${actualRowIdx})">×</span></td>`;
             for (let ci = 0; ci < headers.length; ci++) {
                 const v = row[ci];
-                const text = displayValue(v);
-                const classes = [cellClass(v), isRtlText(text) ? 'cell-rtl' : ''].filter(Boolean).join(' ');
+                const isFormula = formulaIsFormulaText(v);
+                const isActive = p.activeCell && p.activeCell.rowType === 'data' && p.activeCell.dataRowIdx === orig && p.activeCell.colIdx === ci;
+                let text, classes;
+                if (isFormula && !isActive) {
+                    const result = computeFormulaCell(panelId, actualRowIdx, ci);
+                    text = formulaResultText(result);
+                    classes = [formulaResultClass(result), 'cell-formula', isRtlText(text) ? 'cell-rtl' : ''].filter(Boolean).join(' ');
+                } else {
+                    text = displayValue(v);
+                    classes = [cellClass(v), isFormula ? 'cell-formula' : '', isRtlText(text) ? 'cell-rtl' : ''].filter(Boolean).join(' ');
+                }
                 cells += `<td ${classes ? `class="${classes}"` : ''} contenteditable="true" spellcheck="false" data-row-type="data" data-row-idx="${orig}" data-col-idx="${ci}" data-col="${ci}" title="${escapeHtml(text)}">${escapeHtml(text)}</td>`;
             }
             tr.innerHTML = cells;
