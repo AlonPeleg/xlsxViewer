@@ -293,23 +293,23 @@
                     <button class="btn-global-icon" title="Expand all files" onclick="setAllCollapse(false)">
                         <svg viewBox="0 0 16 16"><path d="M11 11H5V5h6v6zm3-9H2v12h12V2zM3 13V3h10v10H3z"/></svg>
                     </button>
-                    <button class="btn-global-icon" title="Upload CSV/TSV/XLSX file(s)" onclick="document.getElementById('fileInput').click()">
+                    <button class="btn-global-icon" title="Upload CSV/TSV/JSON/XLSX file(s)" onclick="document.getElementById('fileInput').click()">
                         <svg viewBox="0 0 16 16"><path d="M8 1.5l3.75 3.75-1.06 1.06L8.75 4.37V10h-1.5V4.37L5.31 6.31 4.25 5.25 8 1.5zM2 12h12v2.5H2V12z"/></svg>
                     </button>
-                    <input type="file" id="fileInput" accept=".csv,.tsv,.txt,.xlsx,.xls" multiple style="display:none" onchange="handleFileUpload(this.files)">
+                    <input type="file" id="fileInput" accept=".csv,.tsv,.txt,.json,.xlsx,.xls" multiple style="display:none" onchange="handleFileUpload(this.files)">
                     <button class="btn btn-secondary" onclick="clearAllEntries()">Clear All</button>
                 </div>
             </div>
 
             <div class="drop-zone" id="pasteZone">
-                <textarea id="pasteInput" rows="2" placeholder="Paste CSV or TSV text here, or drop / upload a .csv, .tsv or .xlsx file..."></textarea>
+                <textarea id="pasteInput" rows="2" placeholder="Paste CSV, TSV, or JSON (e.g. from &quot;Copy as JSON&quot;) here, or drop / upload a .csv, .tsv, .json or .xlsx file..."></textarea>
                 <div class="drop-zone-footer">
-                    <span class="drop-zone-hint">Drop a file anywhere in this box, or paste text and click Add.</span>
+                    <span class="drop-zone-hint">Drop a file anywhere in this box, or paste text (CSV/TSV/JSON) and click Add.</span>
                     <button class="btn" onclick="addFromPasteBox()">Add Table</button>
                 </div>
             </div>
 
-            <div id="container"><div class="empty-state">No files loaded yet — upload or paste a CSV/TSV, or drop an .xlsx workbook.</div></div>
+            <div id="container"><div class="empty-state">No files loaded yet — upload or paste a CSV/TSV/JSON, or drop an .xlsx workbook.</div></div>
         </div>
 
         <div id="compare-pane" class="tab-pane">
@@ -423,7 +423,7 @@
        ========================================================================= */
     const STORAGE_KEY = 'sheet_viewer_entries_v1';
     const LAYOUT_KEY = 'sheet_viewer_layout_mode';
-    const TYPE_COLORS = { csv: 'var(--csv-color)', tsv: 'var(--tsv-color)', xlsx: 'var(--xlsx-color)' };
+    const TYPE_COLORS = { csv: 'var(--csv-color)', tsv: 'var(--tsv-color)', xlsx: 'var(--xlsx-color)', json: '#e8b94a' };
 
     let postedEntries = [];   // { id, name, type, timeStr, sheets:[Sheet], activeSheet }
     let entryIdCounter = 0;
@@ -895,6 +895,54 @@
     }
 
     /* =========================================================================
+       JSON paste/upload — the reverse of "Copy as JSON": turns pasted or uploaded
+       JSON back into a table, so a round trip through this tool (copy as JSON, edit
+       the text elsewhere, paste it back) works the same way CSV/TSV already does.
+       ========================================================================= */
+    function looksLikeJson(text) {
+        const t = text.trim();
+        return t.length > 0 && (t[0] === '[' || t[0] === '{');
+    }
+
+    // Mirrors copyAsJsonData's two shapes (array-of-objects when hasHeader, array-of-arrays
+    // otherwise) plus a couple of forgiving extras (a single bare object, or an array of
+    // plain scalars) so most JSON someone might paste in "just works". Returns null when the
+    // JSON parses fine but isn't a shape that reads as tabular data.
+    function jsonToSheetRows(json) {
+        const scalar = v => (v === undefined || v === null) ? '' : (typeof v === 'object' ? JSON.stringify(v) : v);
+        if (Array.isArray(json)) {
+            if (json.length === 0) return { rows: [['']], hasHeader: false };
+            if (json.every(v => v !== null && typeof v === 'object' && !Array.isArray(v))) {
+                // Array of objects: header row is the ordered union of every key seen, so
+                // objects with slightly different keys (missing/extra fields here and there)
+                // still line up into one table instead of failing the paste.
+                const headers = [];
+                json.forEach(obj => Object.keys(obj).forEach(k => { if (!headers.includes(k)) headers.push(k); }));
+                const rows = [headers, ...json.map(obj => headers.map(h => scalar(obj[h])))];
+                return { rows, hasHeader: true };
+            }
+            if (json.every(v => Array.isArray(v))) {
+                const colCount = Math.max(0, ...json.map(r => r.length));
+                const rows = json.map(r => {
+                    const padded = r.map(scalar);
+                    while (padded.length < colCount) padded.push('');
+                    return padded;
+                });
+                return { rows, hasHeader: false };
+            }
+            // Array of plain scalars ("a", "b", 3, ...) -> a single column.
+            return { rows: json.map(v => [scalar(v)]), hasHeader: false };
+        }
+        if (json !== null && typeof json === 'object') {
+            // A single object (not wrapped in an array) becomes a one-row table.
+            const headers = Object.keys(json);
+            if (!headers.length) return null;
+            return { rows: [headers, headers.map(h => scalar(json[h]))], hasHeader: true };
+        }
+        return null;
+    }
+
+    /* =========================================================================
        Delimited text parsing (CSV / TSV)
        ========================================================================= */
     function detectDelimiter(text) {
@@ -1053,6 +1101,17 @@
                 reader.onload = e => {
                     const raw = (e.target.result || '');
                     if (!raw.trim()) return;
+                    if (ext === 'json' || looksLikeJson(raw)) {
+                        try {
+                            const sheet = jsonToSheetRows(JSON.parse(raw));
+                            if (sheet) { addEntry(name, 'json', [makeSheet('Sheet1', sheet.rows, sheet.hasHeader)]); return; }
+                            if (ext === 'json') { alert('"' + file.name + '" parsed as JSON but isn\'t shaped like a table (expected an array of objects, an array of arrays, or a single object).'); return; }
+                            // else: not a .json file, just happened to start with [ or { -- fall through to delimited parsing below
+                        } catch (err) {
+                            if (ext === 'json') { alert('Could not parse "' + file.name + '" as JSON: ' + err.message); return; }
+                            // else fall through: looked JSON-ish but didn't parse, try as delimited text
+                        }
+                    }
                     const delim = ext === 'tsv' ? '\t' : detectDelimiter(raw);
                     const rows = parseDelimited(raw, delim);
                     addEntry(name, delim === '\t' ? 'tsv' : 'csv', [makeSheet('Sheet1', rows, true)]);
@@ -1069,6 +1128,23 @@
         const box = document.getElementById('pasteInput');
         const raw = box.value;
         if (!raw.trim()) return;
+        if (looksLikeJson(raw)) {
+            let parsed, parseError = null;
+            try { parsed = JSON.parse(raw); } catch (e) { parseError = e; }
+            if (!parseError) {
+                const sheet = jsonToSheetRows(parsed);
+                if (!sheet) {
+                    alert('That JSON parsed fine, but isn\'t shaped like a table — expected an array of objects (like "Copy as JSON" produces), an array of arrays, or a single object.');
+                    return;
+                }
+                addEntry('', 'json', [makeSheet('Sheet1', sheet.rows, sheet.hasHeader)]);
+                box.value = '';
+                return;
+            }
+            // Looked like JSON (starts with [ or {) but didn't parse — fall through to the
+            // delimited-text path below in case it's actually CSV/TSV that happens to start
+            // with one of those characters in its first cell.
+        }
         const delim = detectDelimiter(raw);
         const rows = parseDelimited(raw, delim);
         const type = delim === '\t' ? 'tsv' : 'csv';
