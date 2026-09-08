@@ -85,6 +85,7 @@
     .btn-global-icon { background: transparent; border: none; cursor: pointer; padding: 4px; display: flex; align-items: center; border-radius: 4px; opacity: 0.75; color: var(--text); }
     .btn-global-icon:hover { background: var(--hover-bg); opacity: 1; }
     .btn-global-icon svg { width: 15px; height: 15px; fill: currentColor; }
+    .storage-io-bar { margin-left: auto; display: flex; align-items: center; gap: 2px; padding-right: 8px; }
 
     .drop-zone { background: var(--input-bg); border: 1px dashed var(--border-soft); border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 8px; }
     .drop-zone.file-drop-target { outline: 2px dashed var(--focus); outline-offset: 2px; }
@@ -276,6 +277,15 @@
     <div class="tabs-header">
         <div class="tab-link active" data-tab="viewer-pane" onclick="switchTab('viewer-pane', this)">Viewer</div>
         <div class="tab-link" data-tab="compare-pane" onclick="switchTab('compare-pane', this)">Compare</div>
+        <div class="storage-io-bar">
+            <button class="btn-global-icon" id="storageExportBtn" title="Export local storage to a file" onclick="exportLocalStorageBackup()">
+                <svg viewBox="0 0 16 16"><path d="M8 1.5l3.75 3.75-1.06 1.06L8.75 4.37V10h-1.5V4.37L5.31 6.31 4.25 5.25 8 1.5zM2 12h12v2.5H2V12z"/></svg>
+            </button>
+            <button class="btn-global-icon" id="storageImportBtn" title="Import local storage from a file" onclick="document.getElementById('storageImportInput').click()">                
+                <svg viewBox="0 0 16 16"><path d="M8.75 1v6.63l1.94-1.94 1.06 1.06L8 10.5 4.25 6.75l1.06-1.06L7.25 7.63V1h1.5zM2 12h12v2.5H2V12z"/></svg>
+            </button>
+            <input type="file" id="storageImportInput" accept=".json,application/json" style="display:none" onchange="importLocalStorageBackup(this)">
+        </div>
     </div>
 
     <div class="tab-viewport">
@@ -418,6 +428,81 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <script>
     'use strict';
+    /* =========================================================================
+       Local storage backup (export / import)
+       ========================================================================= */
+    function flashStorageIoButton(btnId) {
+        const btn = document.getElementById(btnId);
+        if (!btn) return;
+        const original = btn.innerHTML;
+        btn.innerHTML = '<span style="font-size:11px; font-weight:bold; color:#89d185;">&#10003;</span>';
+        setTimeout(() => { btn.innerHTML = original; }, 900);
+    }
+
+    function exportLocalStorageBackup() {
+        try {
+            const data = {};
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                data[key] = localStorage.getItem(key);
+            }
+            const payload = {
+                __source: document.title || 'sheet-viewer',
+                __exportedAt: new Date().toISOString(),
+                localStorage: data
+            };
+            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const d = new Date();
+            const pad = n => String(n).padStart(2, '0');
+            const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `sheet-viewer-backup-${stamp}.json`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            flashStorageIoButton('storageExportBtn');
+        } catch (err) {
+            alert('Failed to export local storage: ' + err.message);
+        }
+    }
+
+    function importLocalStorageBackup(fileInput) {
+        const file = fileInput.files && fileInput.files[0];
+        fileInput.value = '';
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                const parsed = JSON.parse(reader.result);
+                const data = (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.localStorage && typeof parsed.localStorage === 'object')
+                    ? parsed.localStorage
+                    : parsed;
+                if (!data || typeof data !== 'object' || Array.isArray(data)) {
+                    throw new Error('That file does not look like a local storage backup.');
+                }
+                const keys = Object.keys(data);
+                if (keys.length === 0) {
+                    alert('That backup file has no saved data.');
+                    return;
+                }
+                const ok = confirm(`Import ${keys.length} saved item(s) from this backup?\n\nThis will overwrite any matching data already stored here, and the page will reload.`);
+                if (!ok) return;
+                keys.forEach(key => {
+                    const value = data[key];
+                    localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
+                });
+                location.reload();
+            } catch (err) {
+                alert('Failed to import backup: ' + err.message);
+            }
+        };
+        reader.onerror = () => alert('Failed to read the selected file.');
+        reader.readAsText(file);
+    }
+
     /* =========================================================================
        State & constants
        ========================================================================= */
